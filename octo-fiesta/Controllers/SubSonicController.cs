@@ -221,6 +221,23 @@ public class SubsonicController : ControllerBase
     }
 
     /// <summary>
+    /// Quick fix for data not found error on feishin
+    /// return a empty lyrics list
+    /// </summary>
+    [HttpGet, HttpPost]
+    [Route("rest/getLyricsBySongId")]
+    [Route("rest/getLyricsBySongId.view")]
+    public async Task<IActionResult> GetLyricsBySongId()
+    {
+        return _responseBuilder.CreateJsonResponse(new
+        {
+            status = "ok",
+            version = "1.16.1",
+            lyricsList = new { }
+        });
+    }
+
+    /// <summary>
     /// Returns external song info if needed.
     /// </summary>
     [HttpGet, HttpPost]
