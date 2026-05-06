@@ -229,12 +229,36 @@ public class SubsonicController : ControllerBase
     [Route("rest/getLyricsBySongId.view")]
     public async Task<IActionResult> GetLyricsBySongId()
     {
-        return _responseBuilder.CreateJsonResponse(new
+        var parameters = await ExtractAllParameters();
+        var format = parameters.GetValueOrDefault("f", "xml");
+
+        try
         {
-            status = "ok",
-            version = "1.16.1",
-            lyricsList = new { }
-        });
+            var result = await _proxyService.RelayAsync("rest/getLyricsBySongId", parameters);
+            var contentType = result.ContentType ?? $"application/{format}";
+            byte[] pattern = Encoding.UTF8.GetBytes("\"status\":\"ok\"");
+
+            if (result.Body.AsSpan().IndexOf(pattern) >= 0) {
+                return File(result.Body, contentType);
+            } else {
+                return _responseBuilder.CreateJsonResponse(new
+                {
+                    status = "ok",
+                    version = "1.16.1",
+                    lyricsList = new { }
+                });
+            }
+
+        }
+        catch
+        {
+            return _responseBuilder.CreateJsonResponse(new
+            {
+                status = "ok",
+                version = "1.16.1",
+                lyricsList = new { }
+            });
+        }
     }
 
     /// <summary>
