@@ -54,6 +54,10 @@ services:
       - Qobuz__UserId=${QOBUZ_USER_ID:-}
       # Preferred audio quality: FLAC, FLAC_24_HIGH, FLAC_24_LOW, FLAC_16, MP3_320 (optional)
       - Qobuz__Quality=${QOBUZ_QUALITY:-}
+      # Qobuz App ID / App Secret (optional)
+      # When BOTH are set, bundle.js scraping is skipped and these values are used directly.
+      - Qobuz__AppId=${QOBUZ_APP_ID:-}
+      - Qobuz__AppSecret=${QOBUZ_APP_SECRET:-}
       
       # ===== SQUIDWTF SETTINGS =====
       # Backend source: Qobuz or Tidal (default: Qobuz)

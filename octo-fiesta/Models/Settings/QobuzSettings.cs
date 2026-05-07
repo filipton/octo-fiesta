@@ -22,4 +22,19 @@ public class QobuzSettings
     /// If not specified or unavailable, the highest available quality will be used.
     /// </summary>
     public string? Quality { get; set; }
+
+    /// <summary>
+    /// Optional Qobuz App ID. When set together with <see cref="AppSecret"/>,
+    /// the service will skip dynamically scraping play.qobuz.com's bundle.js
+    /// and use these values directly. If left empty, the bundle scraper is 
+    /// used as a fallback.
+    /// </summary>
+    public string? AppId { get; set; }
+
+    /// <summary>
+    /// Optional Qobuz App Secret. Used together with <see cref="AppId"/> to
+    /// sign requests (e.g. track/getFileUrl). When provided, bundle scraping
+    /// is bypassed entirely.
+    /// </summary>
+    public string? AppSecret { get; set; }
 }
