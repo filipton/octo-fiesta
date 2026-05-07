@@ -711,7 +711,7 @@ public class SubsonicController : ControllerBase
         var badgeIdentity = await GetExternalCoverBadgeIdentityAsync(parsedExternalId);
         if (badgeIdentity != null)
         {
-            var transformKey = CreateCoverCacheKey("network-badge-v1", badgeIdentity.Provider, badgeIdentity.Type, badgeIdentity.ExternalId, requestedSize);
+            var transformKey = CreateCoverCacheKey("network-badge-v3", badgeIdentity.Provider, badgeIdentity.Type, badgeIdentity.ExternalId, requestedSize);
             var sourcePayload = payload;
             payload = await _coverArtCache.GetOrCreateAsync(
                 transformKey,

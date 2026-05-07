@@ -1,4 +1,3 @@
-using SixLabors.Fonts;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Drawing;
 using SixLabors.ImageSharp.Drawing.Processing;
@@ -31,8 +30,8 @@ public sealed class CoverArtTransformer : ICoverArtTransformer
         var format = Image.DetectFormat(sourceBytes);
         using var image = Image.Load<Rgba32>(sourceBytes);
         var shortestSide = Math.Min(image.Width, image.Height);
-        var badgeRadius = Math.Clamp(shortestSide / 8.5f, 7f, 24f);
-        var margin = Math.Clamp(shortestSide / 24f, 3f, 14f);
+        var badgeRadius = Math.Max(8f, shortestSide / 6.8f);
+        var margin = Math.Max(3f, shortestSide / 24f);
         var ringWidth = Math.Max(1f, shortestSide / 150f);
         var center = new PointF(image.Width - margin - badgeRadius, image.Height - margin - badgeRadius);
         var iconScale = badgeRadius / 24f;
@@ -55,8 +54,8 @@ public sealed class CoverArtTransformer : ICoverArtTransformer
         var top = new PointF(center.X, center.Y - 7.5f * scale);
         var left = new PointF(center.X - 8f * scale, center.Y + 5.5f * scale);
         var right = new PointF(center.X + 8f * scale, center.Y + 5.5f * scale);
-        var lineWidth = Math.Max(1.2f, 2.4f * scale);
-        var nodeRadius = Math.Max(1.7f, 3.2f * scale);
+        var lineWidth = Math.Max(1.4f, 2.8f * scale);
+        var nodeRadius = Math.Max(2f, 3.6f * scale);
 
         DrawLine(ctx, top, left, lineWidth);
         DrawLine(ctx, top, right, lineWidth);
