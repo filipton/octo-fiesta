@@ -30,7 +30,15 @@ public class SubsonicController : ControllerBase
     private readonly PlaylistSyncService? _playlistSyncService;
     private readonly ILogger<SubsonicController> _logger;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
-    
+    private readonly IHttpClientFactory _httpClientFactory;
+
+    /// <summary>
+    /// Name of the named HttpClient used for fetching external cover-art images.
+    /// Configured in Program.cs with an aggressive connection pool to keep TLS
+    /// handshakes warm against static.qobuz.com / e-cdns-images.dzcdn.net etc.
+    /// </summary>
+    public const string CoverArtHttpClient = "cover-art";
+
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
         IMusicMetadataService metadataService,
@@ -41,6 +49,7 @@ public class SubsonicController : ControllerBase
         SubsonicModelMapper modelMapper,
         SubsonicProxyService proxyService,
         IHostApplicationLifetime hostApplicationLifetime,
+        IHttpClientFactory httpClientFactory,
         ILogger<SubsonicController> logger,
         PlaylistSyncService? playlistSyncService = null)
     {
@@ -53,6 +62,7 @@ public class SubsonicController : ControllerBase
         _modelMapper = modelMapper;
         _proxyService = proxyService;
         _hostApplicationLifetime = hostApplicationLifetime;
+        _httpClientFactory = httpClientFactory;
         _playlistSyncService = playlistSyncService;
         _logger = logger;
 
@@ -651,109 +661,144 @@ public class SubsonicController : ControllerBase
         {
             return NotFound();
         }
-        
-        // Check if this is a playlist cover art request
-        if (PlaylistIdHelper.IsExternalPlaylist(id))
+
+        // Local (Subsonic) covers: relay through to upstream Subsonic (Navidrome).
+        var isPlaylist = PlaylistIdHelper.IsExternalPlaylist(id);
+        if (!isPlaylist)
         {
-            try
+            var (isExternal, _, _, _) = _localLibraryService.ParseExternalId(id);
+            if (!isExternal)
+            {
+                try
+                {
+                    var result = await _proxyService.RelayAsync("rest/getCoverArt", parameters);
+                    return File(result.Body, result.ContentType ?? "image/jpeg");
+                }
+                catch
+                {
+                    return NotFound();
+                }
+            }
+        }
+
+        // Honour Subsonic `size` parameter so e.g. album-list thumbnails fetch a much
+        // smaller image from the upstream CDN. Qobuz CDN URLs are size-rewritable
+        // (`{id}_600.jpg` -> `{id}_150.jpg`) without needing an extra API call.
+        int? requestedSize = null;
+        if (parameters.TryGetValue("size", out var sizeStr) && int.TryParse(sizeStr, out var s) && s > 0)
+        {
+            requestedSize = s;
+        }
+
+        var payload = await ResolveAndFetchCoverArtAsync(id, isPlaylist, requestedSize);
+        if (payload == null)
+        {
+            return NotFound();
+        }
+        return File(payload.Bytes, payload.ContentType);
+    }
+
+    /// <summary>
+    /// Rewrites a Qobuz cover URL to the closest available CDN size variant.
+    /// Qobuz CDN serves the same image at fixed sizes: 50, 150, 300, 600, max.
+    /// URL pattern: <c>https://static.qobuz.com/images/covers/xx/yy/{id}_{SIZE}.jpg</c>.
+    /// Returns the URL unchanged for non-Qobuz CDN hosts.
+    /// </summary>
+    private static string RewriteQobuzCoverSize(string url, int requestedSize)
+    {
+        if (!url.Contains("static.qobuz.com/images/", StringComparison.OrdinalIgnoreCase))
+        {
+            return url;
+        }
+
+        // Pick the smallest CDN variant that satisfies the requested size.
+        var target = requestedSize switch
+        {
+            <= 50 => "50",
+            <= 150 => "150",
+            <= 300 => "300",
+            <= 600 => "600",
+            _ => "max",
+        };
+
+        // Replace the `_{size}.jpg` suffix. Qobuz only ever uses .jpg here.
+        var lastUnderscore = url.LastIndexOf('_');
+        var lastDot = url.LastIndexOf('.');
+        if (lastUnderscore < 0 || lastDot < 0 || lastDot <= lastUnderscore)
+        {
+            return url;
+        }
+        return string.Concat(url.AsSpan(0, lastUnderscore + 1), target, url.AsSpan(lastDot));
+    }
+
+    private async Task<CoverArtPayload?> ResolveAndFetchCoverArtAsync(string id, bool isPlaylist, int? requestedSize = null)
+    {
+        try
+        {
+            string? coverUrl = null;
+
+            if (isPlaylist)
             {
                 var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
                 var playlist = await _metadataService.GetPlaylistAsync(provider, externalId);
-                
-                if (playlist == null || string.IsNullOrEmpty(playlist.CoverUrl))
-                {
-                    return NotFound();
-                }
-                
-                // Download and return the cover image
-                var imageResponse = await new HttpClient().GetAsync(playlist.CoverUrl);
-                if (!imageResponse.IsSuccessStatusCode)
-                {
-                    return NotFound();
-                }
-                
-                var imageBytes = await imageResponse.Content.ReadAsByteArrayAsync();
-                var contentType = imageResponse.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
-                return File(imageBytes, contentType);
+                coverUrl = playlist?.CoverUrl;
             }
-            catch (Exception ex)
+            else
             {
-                _logger.LogError(ex, "Error getting playlist cover art for {Id}", id);
-                return NotFound();
+                var (_, coverProvider, type, coverExternalId) = _localLibraryService.ParseExternalId(id);
+                switch (type)
+                {
+                    case "artist":
+                        var artist = await _metadataService.GetArtistAsync(coverProvider!, coverExternalId!);
+                        coverUrl = artist?.ImageUrl;
+                        break;
+                    case "album":
+                        // Lightweight cover-only lookup; avoids pulling the full track list.
+                        coverUrl = await _metadataService.GetAlbumCoverUrlAsync(coverProvider!, coverExternalId!);
+                        break;
+                    case "song":
+                    default:
+                        var song = await _metadataService.GetSongAsync(coverProvider!, coverExternalId!);
+                        coverUrl = song?.CoverArtUrlLarge ?? song?.CoverArtUrl;
+                        if (coverUrl == null)
+                        {
+                            coverUrl = await _metadataService.GetAlbumCoverUrlAsync(coverProvider!, coverExternalId!);
+                        }
+                        break;
+                }
             }
+
+            if (string.IsNullOrEmpty(coverUrl))
+            {
+                return null;
+            }
+
+            // Downsize when the client asked for a thumbnail; Qobuz CDN URLs are size-rewritable.
+            if (requestedSize.HasValue)
+            {
+                coverUrl = RewriteQobuzCoverSize(coverUrl, requestedSize.Value);
+            }
+
+            // Use the dedicated pooled cover-art client (long-lived TLS connections).
+            var httpClient = _httpClientFactory.CreateClient(CoverArtHttpClient);
+            var response = await httpClient.GetAsync(coverUrl, HttpCompletionOption.ResponseHeadersRead);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var bytes = await response.Content.ReadAsByteArrayAsync();
+            var contentType = response.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
+            return new CoverArtPayload(bytes, contentType);
         }
-
-        var (isExternal, coverProvider, type, coverExternalId) = _localLibraryService.ParseExternalId(id);
-
-        if (!isExternal)
+        catch (Exception ex)
         {
-            try
-            {
-                var result = await _proxyService.RelayAsync("rest/getCoverArt", parameters);
-                var contentType = result.ContentType ?? "image/jpeg";
-                return File(result.Body, contentType);
-            }
-            catch
-            {
-                return NotFound();
-            }
+            _logger.LogError(ex, "Error getting cover art for {Id}", id);
+            return null;
         }
-
-        string? coverUrl = null;
-        
-        // Use type to determine which API to call first
-        switch (type)
-        {
-            case "artist":
-                var artist = await _metadataService.GetArtistAsync(coverProvider!, coverExternalId!);
-                if (artist?.ImageUrl != null)
-                {
-                    coverUrl = artist.ImageUrl;
-                }
-                break;
-                
-            case "album":
-                var album = await _metadataService.GetAlbumAsync(coverProvider!, coverExternalId!);
-                if (album?.CoverArtUrl != null)
-                {
-                    coverUrl = album.CoverArtUrlLarge ?? album.CoverArtUrl;
-                }
-                break;
-                
-            case "song":
-            default:
-                // For songs, try to get from song first, then album
-                var song = await _metadataService.GetSongAsync(coverProvider!, coverExternalId!);
-                if (song?.CoverArtUrl != null)
-                {
-                    coverUrl = song.CoverArtUrlLarge ?? song.CoverArtUrl;
-                }
-                else
-                {
-                    // Fallback: try album with same ID (legacy behavior)
-                    var albumFallback = await _metadataService.GetAlbumAsync(coverProvider!, coverExternalId!);
-                    if (albumFallback?.CoverArtUrl != null)
-                    {
-                        coverUrl = albumFallback.CoverArtUrlLarge ?? albumFallback.CoverArtUrl;
-                    }
-                }
-                break;
-        }
-        
-        if (coverUrl != null)
-        {
-            using var httpClient = new HttpClient();
-            var response = await httpClient.GetAsync(coverUrl);
-            if (response.IsSuccessStatusCode)
-            {
-                var imageBytes = await response.Content.ReadAsByteArrayAsync();
-                var contentType = response.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
-                return File(imageBytes, contentType);
-            }
-        }
-
-        return NotFound();
     }
+
+    private sealed record CoverArtPayload(byte[] Bytes, string ContentType);
 
     #region Helper Methods
 

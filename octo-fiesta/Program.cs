@@ -1,3 +1,5 @@
+using System.Net;
+using octo_fiesta.Controllers;
 using octo_fiesta.Models.Settings;
 using octo_fiesta.Services;
 using octo_fiesta.Services.Deezer;
@@ -16,6 +18,31 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddHttpClient();
+
+// Dedicated HttpClient for fetching external cover-art images (Qobuz/Deezer/Tidal CDNs).
+// We use a SocketsHttpHandler with a long-lived connection pool so TLS handshakes are
+// reused across requests. Default IHttpClientFactory rotates handlers every 2 minutes
+// which causes a fresh TLS handshake far too often for image traffic.
+builder.Services.AddHttpClient(SubsonicController.CoverArtHttpClient, client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(15);
+        client.DefaultRequestVersion = HttpVersion.Version20;
+        client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
+    })
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        // Keep idle connections alive for 5 minutes so subsequent cover requests
+        // don't pay the TLS handshake cost.
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
+        // Recycle connections occasionally to honour DNS changes.
+        PooledConnectionLifetime = TimeSpan.FromMinutes(15),
+        MaxConnectionsPerServer = 32,
+        EnableMultipleHttp2Connections = true,
+        AutomaticDecompression = DecompressionMethods.All,
+        ConnectTimeout = TimeSpan.FromSeconds(5),
+    })
+    // Disable handler rotation; the SocketsHttpHandler manages its own pool lifetime.
+    .SetHandlerLifetime(Timeout.InfiniteTimeSpan);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();

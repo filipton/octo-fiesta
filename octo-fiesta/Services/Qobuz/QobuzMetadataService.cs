@@ -239,6 +239,38 @@ public class QobuzMetadataService : IMusicMetadataService
         }
     }
 
+    /// <summary>
+    /// Lightweight cover-art lookup. Qobuz's <c>album/get</c> endpoint returns the full
+    /// album with every track by default, which is wasteful when we only need the cover
+    /// URL. We pass <c>limit=0</c> so Qobuz omits the tracks payload, dramatically
+    /// reducing both bytes-on-the-wire and JSON parsing time.
+    /// </summary>
+    public async Task<string?> GetAlbumCoverUrlAsync(string externalProvider, string externalId)
+    {
+        if (externalProvider != "qobuz") return null;
+
+        try
+        {
+            var appId = await _bundleService.GetAppIdAsync();
+            var url = $"{BaseUrl}album/get?album_id={externalId}&app_id={appId}&limit=0&offset=0";
+
+            var response = await GetWithAuthAsync(url);
+            if (!response.IsSuccessStatusCode) return null;
+
+            var json = await response.Content.ReadAsStringAsync();
+            var albumElement = JsonDocument.Parse(json).RootElement;
+
+            if (albumElement.TryGetProperty("error", out _)) return null;
+
+            return GetLargeCoverArtUrl(albumElement) ?? GetCoverArtUrl(albumElement);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get album cover URL for {ExternalId}", externalId);
+            return null;
+        }
+    }
+
     public async Task<Artist?> GetArtistAsync(string externalProvider, string externalId)
     {
         if (externalProvider != "qobuz") return null;
@@ -298,6 +330,17 @@ public class QobuzMetadataService : IMusicMetadataService
                 
                 foreach (var album in itemsArray)
                 {
+                    // Qobuz's `artist/get?extra=albums` returns every release the artist
+                    // *appears on* (compilations, "Various Artists" samplers, tribute
+                    // albums, classical multi-artist comps, etc). Filter to releases
+                    // where the requested artist is the album's primary artist so the
+                    // discography matches what the artist's own page on play.qobuz.com
+                    // shows.
+                    if (!IsAlbumByArtist(album, externalId))
+                    {
+                        continue;
+                    }
+
                     albums.Add(ParseQobuzAlbum(album));
                 }
                 
@@ -720,6 +763,30 @@ public class QobuzMetadataService : IMusicMetadataService
             ExternalProvider = "qobuz",
             ExternalId = externalId
         };
+    }
+
+    /// <summary>
+    /// Returns true when <paramref name="album"/>'s primary artist matches the
+    /// requested artist id. Used to filter out "Various Artists" / "appears on"
+    /// releases when listing an artist's discography.
+    /// </summary>
+    private static bool IsAlbumByArtist(JsonElement album, string artistId)
+    {
+        if (!album.TryGetProperty("artist", out var artist) ||
+            artist.ValueKind != JsonValueKind.Object ||
+            !artist.TryGetProperty("id", out var idEl))
+        {
+            return false;
+        }
+
+        var idStr = idEl.ValueKind switch
+        {
+            JsonValueKind.Number => idEl.GetInt64().ToString(),
+            JsonValueKind.String => idEl.GetString() ?? string.Empty,
+            _ => string.Empty,
+        };
+
+        return string.Equals(idStr, artistId, StringComparison.Ordinal);
     }
 
     /// <summary>
