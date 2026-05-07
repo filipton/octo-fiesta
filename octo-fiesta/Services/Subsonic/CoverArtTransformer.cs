@@ -19,10 +19,9 @@ public sealed record CoverArtTransformResult(byte[] Bytes, string ContentType);
 
 public sealed class CoverArtTransformer : ICoverArtTransformer
 {
-    private const string PillText = "REMOTE";
-    private static readonly Color PillBackground = Color.FromRgba(0, 0, 0, 204);
-    private static readonly Color PillForeground = Color.FromRgba(255, 255, 255, 217);
-    private static readonly Color PillRing = Color.FromRgba(255, 255, 255, 38);
+    private static readonly Color BadgeBackground = Color.FromRgba(220, 38, 38, 178);
+    private static readonly Color BadgeForeground = Color.FromRgba(255, 255, 255, 230);
+    private static readonly Color BadgeRing = Color.FromRgba(255, 255, 255, 92);
 
     public async Task<CoverArtTransformResult> AddExternalPillAsync(
         byte[] sourceBytes,
@@ -31,43 +30,18 @@ public sealed class CoverArtTransformer : ICoverArtTransformer
     {
         var format = Image.DetectFormat(sourceBytes);
         using var image = Image.Load<Rgba32>(sourceBytes);
-        var fontFamily = GetFontFamily();
-        var font = fontFamily.CreateFont(GetFontSize(image.Width, image.Height), FontStyle.Bold);
-        var textOptions = new TextOptions(font);
-        var textSize = TextMeasurer.MeasureSize(PillText, textOptions);
-
         var shortestSide = Math.Min(image.Width, image.Height);
-        var paddingX = shortestSide / 26f;
-        var paddingY = shortestSide / 72f;
-        var margin = shortestSide / 24f;
-        var pillWidth = textSize.Width + paddingX * 2;
-        var pillHeight = textSize.Height + paddingY * 2;
-        var radius = shortestSide / 42f;
-        var ringWidth = Math.Max(1f, shortestSide / 180f);
-        var x = margin;
-        var y = margin;
-        var richTextOptions = new RichTextOptions(font)
-        {
-            Origin = new PointF(x + pillWidth / 2, y + pillHeight / 2),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
+        var badgeRadius = Math.Clamp(shortestSide / 8.5f, 7f, 24f);
+        var margin = Math.Clamp(shortestSide / 24f, 3f, 14f);
+        var ringWidth = Math.Max(1f, shortestSide / 150f);
+        var center = new PointF(image.Width - margin - badgeRadius, image.Height - margin - badgeRadius);
+        var iconScale = badgeRadius / 24f;
 
         image.Mutate(ctx =>
         {
-            ctx.Fill(PillBackground, new RectangularPolygon(x + radius, y, pillWidth - radius * 2, pillHeight));
-            ctx.Fill(PillBackground, new RectangularPolygon(x, y + radius, pillWidth, pillHeight - radius * 2));
-            ctx.Fill(PillBackground, new EllipsePolygon(x + radius, y + radius, radius));
-            ctx.Fill(PillBackground, new EllipsePolygon(x + pillWidth - radius, y + radius, radius));
-            ctx.Fill(PillBackground, new EllipsePolygon(x + radius, y + pillHeight - radius, radius));
-            ctx.Fill(PillBackground, new EllipsePolygon(x + pillWidth - radius, y + pillHeight - radius, radius));
-            ctx.Draw(PillRing, ringWidth, new RectangularPolygon(x + radius, y, pillWidth - radius * 2, pillHeight));
-            ctx.Draw(PillRing, ringWidth, new RectangularPolygon(x, y + radius, pillWidth, pillHeight - radius * 2));
-            ctx.Draw(PillRing, ringWidth, new EllipsePolygon(x + radius, y + radius, radius));
-            ctx.Draw(PillRing, ringWidth, new EllipsePolygon(x + pillWidth - radius, y + radius, radius));
-            ctx.Draw(PillRing, ringWidth, new EllipsePolygon(x + radius, y + pillHeight - radius, radius));
-            ctx.Draw(PillRing, ringWidth, new EllipsePolygon(x + pillWidth - radius, y + pillHeight - radius, radius));
-            ctx.DrawText(richTextOptions, PillText, PillForeground);
+            ctx.Fill(BadgeBackground, new EllipsePolygon(center, badgeRadius));
+            ctx.Draw(BadgeRing, ringWidth, new EllipsePolygon(center, badgeRadius));
+            DrawNetworkIcon(ctx, center, iconScale);
         });
 
         await using var output = new MemoryStream();
@@ -76,25 +50,28 @@ public sealed class CoverArtTransformer : ICoverArtTransformer
         return new CoverArtTransformResult(output.ToArray(), GetOutputContentType(contentType, format));
     }
 
-    private static float GetFontSize(int width, int height)
+    private static void DrawNetworkIcon(IImageProcessingContext ctx, PointF center, float scale)
     {
-        var shortestSide = Math.Min(width, height);
-        return shortestSide / 12.5f;
+        var top = new PointF(center.X, center.Y - 7.5f * scale);
+        var left = new PointF(center.X - 8f * scale, center.Y + 5.5f * scale);
+        var right = new PointF(center.X + 8f * scale, center.Y + 5.5f * scale);
+        var lineWidth = Math.Max(1.2f, 2.4f * scale);
+        var nodeRadius = Math.Max(1.7f, 3.2f * scale);
+
+        DrawLine(ctx, top, left, lineWidth);
+        DrawLine(ctx, top, right, lineWidth);
+        DrawLine(ctx, left, right, lineWidth);
+        ctx.Fill(BadgeForeground, new EllipsePolygon(top, nodeRadius));
+        ctx.Fill(BadgeForeground, new EllipsePolygon(left, nodeRadius));
+        ctx.Fill(BadgeForeground, new EllipsePolygon(right, nodeRadius));
     }
 
-    private static FontFamily GetFontFamily()
+    private static void DrawLine(IImageProcessingContext ctx, PointF from, PointF to, float width)
     {
-        if (SystemFonts.TryGet("DejaVu Sans Condensed", out var fontFamily))
-        {
-            return fontFamily;
-        }
-
-        if (SystemFonts.TryGet("DejaVu Sans", out fontFamily))
-        {
-            return fontFamily;
-        }
-
-        return SystemFonts.Families.First();
+        var path = new PathBuilder()
+            .AddLine(from, to)
+            .Build();
+        ctx.Draw(BadgeForeground, width, path);
     }
 
     private static IImageEncoder GetEncoder(string contentType, IImageFormat sourceFormat)

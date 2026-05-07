@@ -22,7 +22,8 @@ public class SubsonicControllerCoverArtTests
         Mock<ILocalLibraryService> localLibraryServiceMock,
         Mock<ICoverArtTransformer> coverArtTransformerMock,
         IExternalAlbumAvailabilityService externalAlbumAvailabilityService,
-        byte[] sourceCoverBytes)
+        byte[] sourceCoverBytes,
+        string coverArtId = "ext-qobuz-album-abc")
     {
         var settings = Options.Create(new SubsonicSettings
         {
@@ -75,7 +76,7 @@ public class SubsonicControllerCoverArtTests
             new Mock<ILogger<SubsonicController>>().Object);
 
         var httpContext = new DefaultHttpContext();
-        httpContext.Request.QueryString = new QueryString("?id=ext-qobuz-album-abc&size=150");
+        httpContext.Request.QueryString = new QueryString($"?id={coverArtId}&size=150");
 
         controller.ControllerContext = new ControllerContext
         {
@@ -86,7 +87,7 @@ public class SubsonicControllerCoverArtTests
     }
 
     [Fact]
-    public async Task GetCoverArt_WithRemoteExternalAlbum_AddsPillAndCachesResult()
+    public async Task GetCoverArt_WithRemoteExternalAlbum_AddsBadgeAndCachesResult()
     {
         var metadataServiceMock = new Mock<IMusicMetadataService>();
         metadataServiceMock
@@ -121,6 +122,50 @@ public class SubsonicControllerCoverArtTests
     }
 
     [Fact]
+    public async Task GetCoverArt_WithRemoteExternalSong_AddsBadgeAndCachesResult()
+    {
+        var metadataServiceMock = new Mock<IMusicMetadataService>();
+        metadataServiceMock
+            .Setup(x => x.GetSongAsync("qobuz", "song-abc"))
+            .ReturnsAsync(new Models.Domain.Song
+            {
+                Id = "ext-qobuz-song-song-abc",
+                AlbumId = "ext-qobuz-album-album-abc",
+                CoverArtUrl = "https://static.qobuz.com/images/covers/aa/bb/song_600.jpg"
+            });
+
+        var localLibraryServiceMock = new Mock<ILocalLibraryService>();
+        localLibraryServiceMock
+            .Setup(x => x.ParseExternalId("ext-qobuz-song-song-abc"))
+            .Returns((true, "qobuz", "song", "song-abc"));
+        localLibraryServiceMock
+            .Setup(x => x.ParseExternalId("ext-qobuz-album-album-abc"))
+            .Returns((true, "qobuz", "album", "album-abc"));
+
+        var transformerMock = new Mock<ICoverArtTransformer>();
+        transformerMock
+            .Setup(x => x.AddExternalPillAsync(It.IsAny<byte[]>(), "image/jpeg", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CoverArtTransformResult([8, 8, 8], "image/jpeg"));
+
+        var controller = CreateController(
+            metadataServiceMock,
+            localLibraryServiceMock,
+            transformerMock,
+            new ExternalAlbumAvailabilityService(),
+            [1, 2, 3],
+            "ext-qobuz-song-song-abc");
+
+        var first = Assert.IsType<FileContentResult>(await controller.GetCoverArt());
+        var second = Assert.IsType<FileContentResult>(await controller.GetCoverArt());
+
+        Assert.Equal([8, 8, 8], first.FileContents);
+        Assert.Equal([8, 8, 8], second.FileContents);
+        transformerMock.Verify(
+            x => x.AddExternalPillAsync(It.IsAny<byte[]>(), "image/jpeg", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task GetCoverArt_WhenAlbumDownloadStarted_ReturnsOriginalCover()
     {
         var availabilityService = new ExternalAlbumAvailabilityService();
@@ -143,6 +188,47 @@ public class SubsonicControllerCoverArtTests
             transformerMock,
             availabilityService,
             [1, 2, 3]);
+
+        var result = Assert.IsType<FileContentResult>(await controller.GetCoverArt());
+
+        Assert.Equal([1, 2, 3], result.FileContents);
+        transformerMock.Verify(
+            x => x.AddExternalPillAsync(It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task GetCoverArt_WithRemoteExternalSong_WhenAlbumDownloadStarted_ReturnsOriginalCover()
+    {
+        var availabilityService = new ExternalAlbumAvailabilityService();
+        availabilityService.MarkDownloadStarted("qobuz", "album-abc");
+
+        var metadataServiceMock = new Mock<IMusicMetadataService>();
+        metadataServiceMock
+            .Setup(x => x.GetSongAsync("qobuz", "song-abc"))
+            .ReturnsAsync(new Models.Domain.Song
+            {
+                Id = "ext-qobuz-song-song-abc",
+                AlbumId = "ext-qobuz-album-album-abc",
+                CoverArtUrl = "https://static.qobuz.com/images/covers/aa/bb/song_600.jpg"
+            });
+
+        var localLibraryServiceMock = new Mock<ILocalLibraryService>();
+        localLibraryServiceMock
+            .Setup(x => x.ParseExternalId("ext-qobuz-song-song-abc"))
+            .Returns((true, "qobuz", "song", "song-abc"));
+        localLibraryServiceMock
+            .Setup(x => x.ParseExternalId("ext-qobuz-album-album-abc"))
+            .Returns((true, "qobuz", "album", "album-abc"));
+
+        var transformerMock = new Mock<ICoverArtTransformer>();
+        var controller = CreateController(
+            metadataServiceMock,
+            localLibraryServiceMock,
+            transformerMock,
+            availabilityService,
+            [1, 2, 3],
+            "ext-qobuz-song-song-abc");
 
         var result = Assert.IsType<FileContentResult>(await controller.GetCoverArt());
 

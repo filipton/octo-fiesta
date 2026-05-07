@@ -708,9 +708,10 @@ public class SubsonicController : ControllerBase
             return NotFound();
         }
 
-        if (ShouldAddExternalCoverPill(parsedExternalId))
+        var badgeIdentity = await GetExternalCoverBadgeIdentityAsync(parsedExternalId);
+        if (badgeIdentity != null)
         {
-            var transformKey = CreateCoverCacheKey("pill-v2", parsedExternalId.provider!, parsedExternalId.type!, parsedExternalId.externalId!, requestedSize);
+            var transformKey = CreateCoverCacheKey("network-badge-v1", badgeIdentity.Provider, badgeIdentity.Type, badgeIdentity.ExternalId, requestedSize);
             var sourcePayload = payload;
             payload = await _coverArtCache.GetOrCreateAsync(
                 transformKey,
@@ -725,14 +726,65 @@ public class SubsonicController : ControllerBase
         return File(payload.Bytes, payload.ContentType);
     }
 
-    private bool ShouldAddExternalCoverPill((bool isExternal, string? provider, string? type, string? externalId) parsedExternalId)
+    private async Task<ExternalCoverBadgeIdentity?> GetExternalCoverBadgeIdentityAsync((bool isExternal, string? provider, string? type, string? externalId) parsedExternalId)
     {
-        return parsedExternalId.isExternal &&
-               string.Equals(parsedExternalId.type, "album", StringComparison.OrdinalIgnoreCase) &&
-               !string.IsNullOrWhiteSpace(parsedExternalId.provider) &&
-               !string.IsNullOrWhiteSpace(parsedExternalId.externalId) &&
-               !_externalAlbumAvailabilityService.IsDownloadStarted(parsedExternalId.provider, parsedExternalId.externalId);
+        if (!parsedExternalId.isExternal ||
+            string.IsNullOrWhiteSpace(parsedExternalId.provider) ||
+            string.IsNullOrWhiteSpace(parsedExternalId.externalId))
+        {
+            return null;
+        }
+
+        if (string.Equals(parsedExternalId.type, "album", StringComparison.OrdinalIgnoreCase))
+        {
+            return _externalAlbumAvailabilityService.IsDownloadStarted(parsedExternalId.provider, parsedExternalId.externalId)
+                ? null
+                : new ExternalCoverBadgeIdentity(parsedExternalId.provider, "album", parsedExternalId.externalId);
+        }
+
+        if (string.Equals(parsedExternalId.type, "song", StringComparison.OrdinalIgnoreCase))
+        {
+            var albumIdentity = await GetExternalSongAlbumIdentityAsync(parsedExternalId.provider, parsedExternalId.externalId);
+            if (albumIdentity != null &&
+                _externalAlbumAvailabilityService.IsDownloadStarted(albumIdentity.Provider, albumIdentity.ExternalId))
+            {
+                return null;
+            }
+
+            return new ExternalCoverBadgeIdentity(parsedExternalId.provider, "song", parsedExternalId.externalId);
+        }
+
+        return null;
     }
+
+    private async Task<ExternalCoverBadgeIdentity?> GetExternalSongAlbumIdentityAsync(string provider, string externalId)
+    {
+        try
+        {
+            var song = await _metadataService.GetSongAsync(provider, externalId);
+            if (string.IsNullOrWhiteSpace(song?.AlbumId) || PlaylistIdHelper.IsExternalPlaylist(song.AlbumId))
+            {
+                return null;
+            }
+
+            var (isExternalAlbum, albumProvider, type, albumExternalId) = _localLibraryService.ParseExternalId(song.AlbumId);
+            if (isExternalAlbum &&
+                string.Equals(type, "album", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(albumProvider) &&
+                !string.IsNullOrWhiteSpace(albumExternalId))
+            {
+                return new ExternalCoverBadgeIdentity(albumProvider, "album", albumExternalId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not resolve album identity for cover badge on {Provider}:{ExternalId}", provider, externalId);
+        }
+
+        return null;
+    }
+
+    private sealed record ExternalCoverBadgeIdentity(string Provider, string Type, string ExternalId);
 
     private static string CreateCoverCacheKey(string prefix, string provider, string type, string externalId, int? requestedSize)
     {
