@@ -31,6 +31,9 @@ public class SubsonicController : ControllerBase
     private readonly ILogger<SubsonicController> _logger;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ICoverArtTransformer _coverArtTransformer;
+    private readonly ICoverArtCache _coverArtCache;
+    private readonly IExternalAlbumAvailabilityService _externalAlbumAvailabilityService;
 
     /// <summary>
     /// Name of the named HttpClient used for fetching external cover-art images.
@@ -50,6 +53,9 @@ public class SubsonicController : ControllerBase
         SubsonicProxyService proxyService,
         IHostApplicationLifetime hostApplicationLifetime,
         IHttpClientFactory httpClientFactory,
+        ICoverArtTransformer coverArtTransformer,
+        ICoverArtCache coverArtCache,
+        IExternalAlbumAvailabilityService externalAlbumAvailabilityService,
         ILogger<SubsonicController> logger,
         PlaylistSyncService? playlistSyncService = null)
     {
@@ -63,6 +69,9 @@ public class SubsonicController : ControllerBase
         _proxyService = proxyService;
         _hostApplicationLifetime = hostApplicationLifetime;
         _httpClientFactory = httpClientFactory;
+        _coverArtTransformer = coverArtTransformer;
+        _coverArtCache = coverArtCache;
+        _externalAlbumAvailabilityService = externalAlbumAvailabilityService;
         _playlistSyncService = playlistSyncService;
         _logger = logger;
 
@@ -165,6 +174,8 @@ public class SubsonicController : ControllerBase
         // This ensures quality upgrade logic is applied
         try
         {
+            await MarkAlbumDownloadStartedAsync(provider!, externalId!);
+
             // Allow cancellation from both client disconnect and application shutdown
             using var cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
                 HttpContext.RequestAborted,
@@ -664,10 +675,11 @@ public class SubsonicController : ControllerBase
 
         // Local (Subsonic) covers: relay through to upstream Subsonic (Navidrome).
         var isPlaylist = PlaylistIdHelper.IsExternalPlaylist(id);
+        (bool isExternal, string? provider, string? type, string? externalId) parsedExternalId = default;
         if (!isPlaylist)
         {
-            var (isExternal, _, _, _) = _localLibraryService.ParseExternalId(id);
-            if (!isExternal)
+            parsedExternalId = _localLibraryService.ParseExternalId(id);
+            if (!parsedExternalId.isExternal)
             {
                 try
                 {
@@ -695,7 +707,61 @@ public class SubsonicController : ControllerBase
         {
             return NotFound();
         }
+
+        if (ShouldAddExternalCoverPill(parsedExternalId))
+        {
+            var transformKey = CreateCoverCacheKey("pill-v2", parsedExternalId.provider!, parsedExternalId.type!, parsedExternalId.externalId!, requestedSize);
+            var sourcePayload = payload;
+            payload = await _coverArtCache.GetOrCreateAsync(
+                transformKey,
+                async cancellationToken =>
+                {
+                    var transformed = await _coverArtTransformer.AddExternalPillAsync(sourcePayload.Bytes, sourcePayload.ContentType, cancellationToken);
+                    return new CoverArtPayload(transformed.Bytes, transformed.ContentType);
+                },
+                HttpContext.RequestAborted);
+        }
+
         return File(payload.Bytes, payload.ContentType);
+    }
+
+    private bool ShouldAddExternalCoverPill((bool isExternal, string? provider, string? type, string? externalId) parsedExternalId)
+    {
+        return parsedExternalId.isExternal &&
+               string.Equals(parsedExternalId.type, "album", StringComparison.OrdinalIgnoreCase) &&
+               !string.IsNullOrWhiteSpace(parsedExternalId.provider) &&
+               !string.IsNullOrWhiteSpace(parsedExternalId.externalId) &&
+               !_externalAlbumAvailabilityService.IsDownloadStarted(parsedExternalId.provider, parsedExternalId.externalId);
+    }
+
+    private static string CreateCoverCacheKey(string prefix, string provider, string type, string externalId, int? requestedSize)
+    {
+        return $"{prefix}:{provider}:{type}:{externalId}:{requestedSize?.ToString() ?? "original"}";
+    }
+
+    private async Task MarkAlbumDownloadStartedAsync(string provider, string externalId)
+    {
+        try
+        {
+            var song = await _metadataService.GetSongAsync(provider, externalId);
+            if (string.IsNullOrWhiteSpace(song?.AlbumId) || PlaylistIdHelper.IsExternalPlaylist(song.AlbumId))
+            {
+                return;
+            }
+
+            var (isExternalAlbum, albumProvider, type, albumExternalId) = _localLibraryService.ParseExternalId(song.AlbumId);
+            if (isExternalAlbum &&
+                string.Equals(type, "album", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(albumProvider) &&
+                !string.IsNullOrWhiteSpace(albumExternalId))
+            {
+                _externalAlbumAvailabilityService.MarkDownloadStarted(albumProvider, albumExternalId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not mark album download started for {Provider}:{ExternalId}", provider, externalId);
+        }
     }
 
     /// <summary>
@@ -779,17 +845,21 @@ public class SubsonicController : ControllerBase
                 coverUrl = RewriteQobuzCoverSize(coverUrl, requestedSize.Value);
             }
 
-            // Use the dedicated pooled cover-art client (long-lived TLS connections).
-            var httpClient = _httpClientFactory.CreateClient(CoverArtHttpClient);
-            var response = await httpClient.GetAsync(coverUrl, HttpCompletionOption.ResponseHeadersRead);
-            if (!response.IsSuccessStatusCode)
-            {
-                return null;
-            }
+            var sourceKey = $"cover-source:{coverUrl}";
+            return await _coverArtCache.GetOrCreateAsync(
+                sourceKey,
+                async cancellationToken =>
+                {
+                    // Use the dedicated pooled cover-art client (long-lived TLS connections).
+                    var httpClient = _httpClientFactory.CreateClient(CoverArtHttpClient);
+                    var response = await httpClient.GetAsync(coverUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                    response.EnsureSuccessStatusCode();
 
-            var bytes = await response.Content.ReadAsByteArrayAsync();
-            var contentType = response.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
-            return new CoverArtPayload(bytes, contentType);
+                    var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+                    var contentType = response.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
+                    return new CoverArtPayload(bytes, contentType);
+                },
+                HttpContext.RequestAborted);
         }
         catch (Exception ex)
         {
@@ -797,8 +867,6 @@ public class SubsonicController : ControllerBase
             return null;
         }
     }
-
-    private sealed record CoverArtPayload(byte[] Bytes, string ContentType);
 
     #region Helper Methods
 

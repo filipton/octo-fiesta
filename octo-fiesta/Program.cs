@@ -17,6 +17,11 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 
 builder.Services.AddControllers();
+builder.Services.AddMemoryCache(options =>
+{
+    // Cover-art entries are byte arrays; cap cache growth while keeping hot search results fast.
+    options.SizeLimit = 512;
+});
 builder.Services.AddHttpClient();
 
 // Dedicated HttpClient for fetching external cover-art images (Qobuz/Deezer/Tidal CDNs).
@@ -77,6 +82,9 @@ builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
 builder.Services.AddSingleton<SubsonicRequestParser>();
 builder.Services.AddSingleton<SubsonicResponseBuilder>();
 builder.Services.AddSingleton<SubsonicModelMapper>();
+builder.Services.AddSingleton<ICoverArtTransformer, CoverArtTransformer>();
+builder.Services.AddSingleton<ICoverArtCache, CoverArtCache>();
+builder.Services.AddSingleton<IExternalAlbumAvailabilityService, ExternalAlbumAvailabilityService>();
 builder.Services.AddScoped<SubsonicProxyService>();
 
 // Register music service based on configuration
