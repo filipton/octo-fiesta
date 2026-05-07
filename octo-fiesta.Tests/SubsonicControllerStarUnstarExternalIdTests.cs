@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Moq;
 using Moq.Protected;
@@ -86,6 +87,10 @@ public class SubsonicControllerStarUnstarExternalIdTests
             _modelMapper,
             proxyService,
             appLifetimeMock.Object,
+            mockHttpClientFactory.Object,
+            new CoverArtTransformer(),
+            new CoverArtCache(new MemoryCache(new MemoryCacheOptions { SizeLimit = 512 })),
+            new ExternalAlbumAvailabilityService(),
             _mockLogger.Object,
             playlistSyncService: null);
 
