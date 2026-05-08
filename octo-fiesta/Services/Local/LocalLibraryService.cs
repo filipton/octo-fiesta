@@ -82,7 +82,7 @@ public class LocalLibraryService : ILocalLibraryService
         return null;
     }
 
-public async Task RegisterDownloadedSongAsync(Song song, string localPath, string? downloadedQuality = null)
+public async Task RegisterDownloadedSongAsync(Song song, string localPath, string? downloadedQuality = null, string? localSubsonicId = null)
     {
         if (song.ExternalProvider == null || song.ExternalId == null) return;
         
@@ -99,6 +99,7 @@ public async Task RegisterDownloadedSongAsync(Song song, string localPath, strin
                 ExternalProvider = song.ExternalProvider,
                 ExternalId = song.ExternalId,
                 LocalPath = localPath,
+                LocalSubsonicId = localSubsonicId,
                 Title = song.Title,
                 Artist = song.Artist,
                 Album = song.Album,

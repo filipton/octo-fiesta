@@ -7,6 +7,7 @@ using octo_fiesta.Services.Local;
 using octo_fiesta.Services.Subsonic;
 using TagLib;
 using IOFile = System.IO.File;
+using IODirectory = System.IO.Directory;
 using System.Collections.Concurrent;
 
 namespace octo_fiesta.Services.Common;
@@ -55,6 +56,22 @@ public abstract class BaseDownloadService : IDownloadService
                 _playlistSyncService = _serviceProvider.GetService<PlaylistSyncService>();
             }
             return _playlistSyncService;
+        }
+    }
+
+    /// <summary>
+    /// Lazy-loaded Navidrome upload service. Returns null when not registered.
+    /// </summary>
+    private INavidromeUploadService? _navidromeUploadService;
+    protected INavidromeUploadService? NavidromeUploadService
+    {
+        get
+        {
+            if (_navidromeUploadService == null)
+            {
+                _navidromeUploadService = _serviceProvider.GetService<INavidromeUploadService>();
+            }
+            return _navidromeUploadService;
         }
     }
 
@@ -491,10 +508,41 @@ public abstract class BaseDownloadService : IDownloadService
             Song song = await GetSongMetadataForTrackAsync(externalProvider, externalId);
             var downloadResult = await DownloadTrackAsync(externalId, song, cancellationToken);
             string localPath;
-            await using (downloadResult.DownloadStream)
+            string? navidromeUploadId = null;
+
+            // Use the Navidrome upload API when enabled and we are not in cache mode and
+            // not currently performing a same-path quality upgrade (which relies on backup/replace).
+            var uploadService = NavidromeUploadService;
+            var useUploadApi = !isCache
+                && string.IsNullOrEmpty(ourDownloadInfo.BackupPath)
+                && uploadService != null
+                && uploadService.IsConfigured;
+
+            if (useUploadApi)
             {
-                localPath = await SaveDownloadStreamToFileAsync(downloadResult, song, isCache, cancellationToken);
+                await using (downloadResult.DownloadStream)
+                {
+                    var uploaded = await UploadDownloadStreamToNavidromeAsync(
+                        downloadResult, song, uploadService!, cancellationToken);
+
+                    if (uploaded == null)
+                    {
+                        throw new InvalidOperationException(
+                            "Navidrome upload failed; aborting download to avoid silent fallback");
+                    }
+
+                    localPath = uploaded.Value.LocalPath;
+                    navidromeUploadId = uploaded.Value.NavidromeId;
+                }
             }
+            else
+            {
+                await using (downloadResult.DownloadStream)
+                {
+                    localPath = await SaveDownloadStreamToFileAsync(downloadResult, song, isCache, cancellationToken);
+                }
+            }
+
             song.LocalPath = localPath;
 
             ourDownloadInfo.Status = DownloadStatus.Completed;
@@ -526,20 +574,25 @@ public abstract class BaseDownloadService : IDownloadService
             // Only register and scan if NOT in cache mode
             if (!isCache)
             {
-                await LocalLibraryService.RegisterDownloadedSongAsync(song, localPath, downloadResult.DownloadedQuality);
+                await LocalLibraryService.RegisterDownloadedSongAsync(
+                    song, localPath, downloadResult.DownloadedQuality, navidromeUploadId);
 
-                // Trigger a Subsonic library rescan (with debounce)
-                _ = Task.Run(async () =>
+                // The upload API ingests the track immediately, so no scan is needed in that path.
+                if (navidromeUploadId == null)
                 {
-                    try
+                    // Trigger a Subsonic library rescan (with debounce)
+                    _ = Task.Run(async () =>
                     {
-                        await LocalLibraryService.TriggerLibraryScanAsync();
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.LogWarning(ex, "Failed to trigger library scan after download");
-                    }
-                });
+                        try
+                        {
+                            await LocalLibraryService.TriggerLibraryScanAsync();
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogWarning(ex, "Failed to trigger library scan after download");
+                        }
+                    });
+                }
 
                 // If download mode is Album and triggering is enabled, start background download of remaining tracks
                 if (triggerAlbumDownload && SubsonicSettings.DownloadMode == DownloadMode.Album && !string.IsNullOrEmpty(song.AlbumId))
@@ -697,6 +750,108 @@ public abstract class BaseDownloadService : IDownloadService
         {
             TryDeleteIncompleteFile(outputPath);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Saves the freshly downloaded stream to a temp file (with metadata) and uploads it to
+    /// Navidrome via the custom <c>POST /api/upload</c> endpoint. The temp file is deleted on
+    /// completion (success or failure) - Navidrome stores its own copy in the library.
+    /// </summary>
+    /// <returns>
+    /// A tuple of (LocalPath, NavidromeId) when the upload succeeds. LocalPath is computed by
+    /// joining <see cref="DownloadPath"/> with the relative path returned by Navidrome (assumes
+    /// the configured DownloadPath maps to the Navidrome library root - typical docker-compose
+    /// setup). Returns <c>null</c> when the upload fails so the caller can decide what to do.
+    /// </returns>
+    protected async Task<(string LocalPath, string NavidromeId)?> UploadDownloadStreamToNavidromeAsync(
+        DownloadResult result,
+        Song song,
+        INavidromeUploadService uploadService,
+        CancellationToken cancellationToken)
+    {
+        // Stage the file in a scratch dir outside the library so Navidrome only ever sees the
+        // copy it ingests via the upload API.
+        var stagingRoot = Path.Combine(Path.GetTempPath(), "octo-fiesta-upload");
+        EnsureDirectoryExists(stagingRoot);
+
+        var stagingPath = PathHelper.BuildTrackPath(
+            stagingRoot, song, result.Extension, SubsonicSettings.FolderTemplate, result.DownloadedQuality);
+        EnsureDirectoryExists(Path.GetDirectoryName(stagingPath)!);
+        stagingPath = PathHelper.ResolveUniquePath(stagingPath);
+
+        try
+        {
+            await using (var outputFile = IOFile.Create(stagingPath))
+            {
+                await result.DownloadStream.CopyToAsync(outputFile, cancellationToken);
+            }
+
+            await WriteMetadataAsync(stagingPath, song, cancellationToken);
+
+            // Compute the destination folder for the upload using the same artist/album layout
+            // as the local download path, optionally prefixed by NavidromeUploadFolder.
+            var fileName = Path.GetFileName(stagingPath);
+            var stagingDir = Path.GetDirectoryName(stagingPath)!;
+            var relativeDir = Path.GetRelativePath(stagingRoot, stagingDir).Replace('\\', '/');
+
+            var prefix = SubsonicSettings.NavidromeUploadFolder?.Trim().Trim('/');
+            string folder;
+            if (string.IsNullOrEmpty(prefix))
+            {
+                folder = relativeDir == "." ? string.Empty : relativeDir;
+            }
+            else
+            {
+                folder = relativeDir == "." ? prefix : $"{prefix}/{relativeDir}";
+            }
+
+            var uploadResult = await uploadService.UploadFileAsync(stagingPath, folder, fileName, cancellationToken);
+            if (uploadResult == null)
+            {
+                return null;
+            }
+
+            // Best-effort local path: assumes DownloadPath is mounted at the Navidrome library root.
+            // If it isn't, the file simply won't exist locally - the Navidrome ID is what matters.
+            var localPath = Path.Combine(
+                DownloadPath,
+                uploadResult.Path.Replace('/', Path.DirectorySeparatorChar));
+
+            if (!IOFile.Exists(localPath))
+            {
+                Logger.LogDebug(
+                    "Uploaded track is not visible at expected local path {LocalPath} (DownloadPath may not be mounted as the Navidrome library root)",
+                    localPath);
+            }
+
+            return (localPath, uploadResult.Id);
+        }
+        finally
+        {
+            try
+            {
+                if (IOFile.Exists(stagingPath))
+                {
+                    IOFile.Delete(stagingPath);
+                }
+
+                // Clean up empty parent directories under the staging root to avoid clutter.
+                var dir = Path.GetDirectoryName(stagingPath);
+                while (!string.IsNullOrEmpty(dir)
+                    && dir.StartsWith(stagingRoot, StringComparison.Ordinal)
+                    && dir.Length > stagingRoot.Length
+                    && IODirectory.Exists(dir)
+                    && !IODirectory.EnumerateFileSystemEntries(dir).Any())
+                {
+                    IODirectory.Delete(dir);
+                    dir = Path.GetDirectoryName(dir);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Failed to clean up staging file {Path}", stagingPath);
+            }
         }
     }
 

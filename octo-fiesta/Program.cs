@@ -85,6 +85,7 @@ builder.Services.AddSingleton<SubsonicModelMapper>();
 builder.Services.AddSingleton<ICoverArtTransformer, CoverArtTransformer>();
 builder.Services.AddSingleton<ICoverArtCache, CoverArtCache>();
 builder.Services.AddSingleton<IExternalAlbumAvailabilityService, ExternalAlbumAvailabilityService>();
+builder.Services.AddSingleton<INavidromeUploadService, NavidromeUploadService>();
 builder.Services.AddScoped<SubsonicProxyService>();
 
 // Register music service based on configuration

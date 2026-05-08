@@ -1,6 +1,6 @@
 services:
   octo-fiesta:
-    image: ghcr.io/v1ck3s/octo-fiesta
+    image: ghcr.io/filipton/octo-fiesta:dev
     container_name: octo-fiesta
     restart: unless-stopped
     ports:
@@ -38,6 +38,11 @@ services:
       # Folder template for organizing downloaded files (default: {artist}/{album}/{track} - {title})
       # Available placeholders: {artist}, {album}, {title}, {track}, {disc}, {year}, {genre}, {quality}
       - Subsonic__FolderTemplate=${FOLDER_TEMPLATE}
+      # ===== NAVIDROME UPLOAD API (forked Navidrome only) =====
+      # Use the custom POST /api/upload endpoint to skip the library scan
+      - Subsonic__UseNavidromeUploadApi=${USE_NAVIDROME_UPLOAD_API:-false}
+      - Subsonic__NavidromeLibraryId=${NAVIDROME_LIBRARY_ID:-1}
+      - Subsonic__NavidromeUploadFolder=${NAVIDROME_UPLOAD_FOLDER:-}
       
       # ===== DEEZER SETTINGS =====
       # Deezer ARL token (required if using Deezer)
