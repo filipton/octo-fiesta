@@ -138,13 +138,18 @@ public class SubsonicController : ControllerBase
             ? _metadataService.SearchPlaylistsAsync(cleanQuery, ac) // Use same limit as albums
             : Task.FromResult(new List<ExternalPlaylist>());
 
-        await Task.WhenAll(subsonicTask, externalTask, playlistTask);
+        // Snapshot of downloaded-song mappings (cheap after first load) used during merge
+        // to drop external songs that already have a local equivalent.
+        var mappingsTask = _localLibraryService.GetMappingsSnapshotAsync(HttpContext.RequestAborted);
+
+        await Task.WhenAll(subsonicTask, externalTask, playlistTask, mappingsTask);
 
         var subsonicResult = await subsonicTask;
         var externalResult = await externalTask;
         var playlistResult = await playlistTask;
+        var mappings = await mappingsTask;
 
-        return MergeSearchResults(subsonicResult, externalResult, playlistResult, format);
+        return MergeSearchResults(subsonicResult, externalResult, playlistResult, mappings, format);
     }
 
     /// <summary>
@@ -926,6 +931,7 @@ public class SubsonicController : ControllerBase
         (byte[]? Body, string? ContentType, bool Success) subsonicResult,
         SearchResult externalResult,
         List<ExternalPlaylist> playlistResult,
+        IReadOnlyDictionary<string, LocalSongMapping> mappings,
         string format)
     {
         var (localSongs, localAlbums, localArtists) = subsonicResult.Success && subsonicResult.Body != null
@@ -939,6 +945,7 @@ public class SubsonicController : ControllerBase
             localArtists, 
             externalResult,
             playlistResult,
+            mappings,
             isJson);
 
         if (isJson)

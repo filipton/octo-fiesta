@@ -25,6 +25,13 @@ public interface ILocalLibraryService
     /// Gets the full mapping for an external song (includes quality info)
     /// </summary>
     Task<LocalSongMapping?> GetMappingForExternalSongAsync(string externalProvider, string externalId);
+
+    /// <summary>
+    /// Returns a read-only snapshot of all known external-to-local mappings keyed by
+    /// <c>"{provider}:{externalId}"</c>. Intended for bulk lookups (e.g. search dedupe)
+    /// where calling per-id helpers would be wasteful.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, LocalSongMapping>> GetMappingsSnapshotAsync(CancellationToken cancellationToken = default);
     
     /// <summary>
     /// Gets the mapping between external ID and local ID

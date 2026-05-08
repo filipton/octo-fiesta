@@ -128,6 +128,23 @@ public async Task RegisterDownloadedSongAsync(Song song, string localPath, strin
         return null;
     }
 
+    public async Task<IReadOnlyDictionary<string, LocalSongMapping>> GetMappingsSnapshotAsync(CancellationToken cancellationToken = default)
+    {
+        var mappings = await LoadMappingsAsync();
+
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            // Return a defensive copy so callers can iterate safely while writers (downloads,
+            // local-id resolution) continue mutating the cached dictionary under the same lock.
+            return new Dictionary<string, LocalSongMapping>(mappings);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     public async Task<string?> GetLocalIdForExternalSongAsync(string externalProvider, string externalId)
     {
         var mappings = await LoadMappingsAsync();

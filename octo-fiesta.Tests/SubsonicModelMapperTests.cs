@@ -3,6 +3,7 @@ using Moq;
 using octo_fiesta.Models.Domain;
 using octo_fiesta.Models.Search;
 using octo_fiesta.Models.Subsonic;
+using octo_fiesta.Services.Local;
 using octo_fiesta.Services.Subsonic;
 using System.Text;
 using System.Text.Json;
@@ -317,5 +318,302 @@ public class SubsonicModelMapperTests
         Assert.Single(mergedSongs);
         Assert.Single(mergedAlbums);
         Assert.Single(mergedArtists);
+    }
+
+    [Fact]
+    public void MergeSearchResults_DropsExternalSong_WhenMappingHasLocalIdPresentInLocalSongs()
+    {
+        // Local search result contains the Navidrome song that the ext id maps to.
+        var localSongs = new List<object>
+        {
+            new Dictionary<string, object>
+            {
+                ["id"] = "local-song-7",
+                ["title"] = "Some Track",
+                ["artist"] = "Some Artist"
+            }
+        };
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>
+            {
+                new Song
+                {
+                    Id = "ext-qobuz-song-123",
+                    Title = "Different Title",
+                    Artist = "Different Artist",
+                    ExternalProvider = "qobuz",
+                    ExternalId = "123"
+                }
+            },
+            Albums = new List<Album>(),
+            Artists = new List<Artist>()
+        };
+
+        var mappings = new Dictionary<string, LocalSongMapping>
+        {
+            ["qobuz:123"] = new LocalSongMapping
+            {
+                ExternalProvider = "qobuz",
+                ExternalId = "123",
+                LocalSubsonicId = "local-song-7",
+                LocalPath = "/tmp/file.flac"
+            }
+        };
+
+        var (mergedSongs, _, _) = _mapper.MergeSearchResults(
+            localSongs, new List<object>(), new List<object>(),
+            externalResult, new List<ExternalPlaylist>(), mappings, true);
+
+        Assert.Single(mergedSongs); // only the local song; ext dropped
+    }
+
+    [Fact]
+    public void MergeSearchResults_DropsExternalSong_WhenArtistTitleMatchesLocal_NoMapping()
+    {
+        // Library predates Octo Fiesta, so .mappings.json has no entry for this song.
+        var localSongs = new List<object>
+        {
+            new Dictionary<string, object>
+            {
+                ["id"] = "local-100",
+                ["title"] = "Let It Happen",
+                ["artist"] = "Tame Impala"
+            }
+        };
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>
+            {
+                new Song
+                {
+                    Id = "ext-qobuz-song-999",
+                    Title = "Let It Happen",
+                    Artist = "Tame Impala",
+                    ExternalProvider = "qobuz",
+                    ExternalId = "999"
+                }
+            },
+            Albums = new List<Album>(),
+            Artists = new List<Artist>()
+        };
+
+        var mappings = new Dictionary<string, LocalSongMapping>();
+
+        var (mergedSongs, _, _) = _mapper.MergeSearchResults(
+            localSongs, new List<object>(), new List<object>(),
+            externalResult, new List<ExternalPlaylist>(), mappings, true);
+
+        Assert.Single(mergedSongs);
+    }
+
+    [Fact]
+    public void MergeSearchResults_KeepsExternalSong_WhenMappingExistsButLocalIdMissing()
+    {
+        // User deleted the song from Navidrome but the mapping row still exists.
+        // The local search no longer returns the mapped id and metadata doesn't match,
+        // so the ext result must remain visible.
+        var localSongs = new List<object>(); // Navidrome no longer surfaces it
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>
+            {
+                new Song
+                {
+                    Id = "ext-qobuz-song-123",
+                    Title = "Orphan Track",
+                    Artist = "Some Artist",
+                    ExternalProvider = "qobuz",
+                    ExternalId = "123"
+                }
+            },
+            Albums = new List<Album>(),
+            Artists = new List<Artist>()
+        };
+
+        var mappings = new Dictionary<string, LocalSongMapping>
+        {
+            ["qobuz:123"] = new LocalSongMapping
+            {
+                ExternalProvider = "qobuz",
+                ExternalId = "123",
+                LocalSubsonicId = "local-song-7",
+                LocalPath = "/tmp/file.flac"
+            }
+        };
+
+        var (mergedSongs, _, _) = _mapper.MergeSearchResults(
+            localSongs, new List<object>(), new List<object>(),
+            externalResult, new List<ExternalPlaylist>(), mappings, true);
+
+        Assert.Single(mergedSongs);
+    }
+
+    [Fact]
+    public void MergeSearchResults_DropsExternalAlbum_WhenArtistAlbumTitleMatchesLocal()
+    {
+        var localAlbums = new List<object>
+        {
+            new Dictionary<string, object>
+            {
+                ["id"] = "local-album-1",
+                ["name"] = "Currents",
+                ["artist"] = "Tame Impala"
+            }
+        };
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>(),
+            Albums = new List<Album>
+            {
+                new Album
+                {
+                    Id = "ext-qobuz-album-555",
+                    Title = "Currents",
+                    Artist = "Tame Impala"
+                }
+            },
+            Artists = new List<Artist>()
+        };
+
+        var (_, mergedAlbums, _) = _mapper.MergeSearchResults(
+            new List<object>(), localAlbums, new List<object>(),
+            externalResult, new List<ExternalPlaylist>(),
+            new Dictionary<string, LocalSongMapping>(), true);
+
+        Assert.Single(mergedAlbums);
+    }
+
+    [Fact]
+    public void MergeSearchResults_KeepsAllExternal_WhenLocalListsAreEmpty()
+    {
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>
+            {
+                new Song { Id = "ext-1", Title = "A", Artist = "Artist", ExternalProvider = "qobuz", ExternalId = "1" },
+                new Song { Id = "ext-2", Title = "B", Artist = "Artist", ExternalProvider = "qobuz", ExternalId = "2" }
+            },
+            Albums = new List<Album>
+            {
+                new Album { Id = "ext-album-1", Title = "Album A", Artist = "Artist" }
+            },
+            Artists = new List<Artist>
+            {
+                new Artist { Id = "ext-artist-1", Name = "Artist" }
+            }
+        };
+
+        var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
+            new List<object>(), new List<object>(), new List<object>(),
+            externalResult, new List<ExternalPlaylist>(),
+            new Dictionary<string, LocalSongMapping>(), true);
+
+        Assert.Equal(2, mergedSongs.Count);
+        Assert.Single(mergedAlbums);
+        Assert.Single(mergedArtists);
+    }
+
+    [Fact]
+    public void MergeSearchResults_StillDedupesArtistsByName_WithMappings()
+    {
+        var localArtists = new List<object>
+        {
+            new Dictionary<string, object> { ["id"] = "local-1", ["name"] = "Tame Impala" }
+        };
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>(),
+            Albums = new List<Album>(),
+            Artists = new List<Artist>
+            {
+                new Artist { Id = "ext-1", Name = "tame impala" },
+                new Artist { Id = "ext-2", Name = "Other Artist" }
+            }
+        };
+
+        var (_, _, mergedArtists) = _mapper.MergeSearchResults(
+            new List<object>(), new List<object>(), localArtists,
+            externalResult, new List<ExternalPlaylist>(),
+            new Dictionary<string, LocalSongMapping>(), true);
+
+        Assert.Equal(2, mergedArtists.Count); // 1 local + 1 ext (the duplicate is filtered)
+    }
+
+    [Fact]
+    public void MergeSearchResults_Xml_DropsExternalSong_WhenMappingMatches()
+    {
+        var localSongs = new List<object>
+        {
+            new XElement("song",
+                new XAttribute("id", "local-song-7"),
+                new XAttribute("title", "Some Track"),
+                new XAttribute("artist", "Some Artist"))
+        };
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>
+            {
+                new Song
+                {
+                    Id = "ext-qobuz-song-123",
+                    Title = "Different Title",
+                    Artist = "Different Artist",
+                    ExternalProvider = "qobuz",
+                    ExternalId = "123"
+                }
+            },
+            Albums = new List<Album>(),
+            Artists = new List<Artist>()
+        };
+        var mappings = new Dictionary<string, LocalSongMapping>
+        {
+            ["qobuz:123"] = new LocalSongMapping
+            {
+                ExternalProvider = "qobuz",
+                ExternalId = "123",
+                LocalSubsonicId = "local-song-7",
+                LocalPath = "/tmp/file.flac"
+            }
+        };
+
+        var (mergedSongs, _, _) = _mapper.MergeSearchResults(
+            localSongs, new List<object>(), new List<object>(),
+            externalResult, new List<ExternalPlaylist>(), mappings, false);
+
+        Assert.Single(mergedSongs);
+    }
+
+    [Fact]
+    public void MergeSearchResults_Xml_DropsExternalAlbum_WhenArtistAlbumTitleMatchesLocal()
+    {
+        var localAlbums = new List<object>
+        {
+            new XElement("album",
+                new XAttribute("id", "local-album-1"),
+                new XAttribute("name", "Currents"),
+                new XAttribute("artist", "Tame Impala"))
+        };
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>(),
+            Albums = new List<Album>
+            {
+                new Album
+                {
+                    Id = "ext-qobuz-album-555",
+                    Title = "Currents",
+                    Artist = "Tame Impala"
+                }
+            },
+            Artists = new List<Artist>()
+        };
+
+        var (_, mergedAlbums, _) = _mapper.MergeSearchResults(
+            new List<object>(), localAlbums, new List<object>(),
+            externalResult, new List<ExternalPlaylist>(),
+            new Dictionary<string, LocalSongMapping>(), false);
+
+        Assert.Single(mergedAlbums);
     }
 }
