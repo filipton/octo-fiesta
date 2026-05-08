@@ -616,4 +616,208 @@ public class SubsonicModelMapperTests
 
         Assert.Single(mergedAlbums);
     }
+
+    [Fact]
+    public void MergeSearchResults_DedupesExternalPlaylists_BySameProviderNameAndCurator()
+    {
+        // Qobuz returns several yearly snapshots of the same curated list with the
+        // same name and curator but distinct ids; we want exactly one playlist-album.
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>(),
+            Albums = new List<Album>(),
+            Artists = new List<Artist>()
+        };
+        var playlists = new List<ExternalPlaylist>
+        {
+            new ExternalPlaylist
+            {
+                Id = "pl-qobuz-1",
+                Name = "Electroclash Essentials",
+                CuratorName = "Qobuz Steve",
+                Provider = "qobuz"
+            },
+            new ExternalPlaylist
+            {
+                Id = "pl-qobuz-2",
+                Name = "Electroclash Essentials",
+                CuratorName = "Qobuz Steve",
+                Provider = "qobuz"
+            },
+            new ExternalPlaylist
+            {
+                Id = "pl-qobuz-3",
+                Name = "Electroclash Essentials",
+                CuratorName = "Qobuz Steve",
+                Provider = "qobuz"
+            }
+        };
+
+        var (_, mergedAlbums, _) = _mapper.MergeSearchResults(
+            new List<object>(), new List<object>(), new List<object>(),
+            externalResult, playlists, true);
+
+        Assert.Single(mergedAlbums);
+    }
+
+    [Fact]
+    public void MergeSearchResults_KeepsExternalPlaylists_WhenCuratorDiffers()
+    {
+        // Two distinct curators publishing playlists that happen to share a generic title
+        // are NOT duplicates - keep both.
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>(),
+            Albums = new List<Album>(),
+            Artists = new List<Artist>()
+        };
+        var playlists = new List<ExternalPlaylist>
+        {
+            new ExternalPlaylist
+            {
+                Id = "pl-qobuz-1",
+                Name = "Workout",
+                CuratorName = "DJ A",
+                Provider = "qobuz"
+            },
+            new ExternalPlaylist
+            {
+                Id = "pl-qobuz-2",
+                Name = "Workout",
+                CuratorName = "DJ B",
+                Provider = "qobuz"
+            }
+        };
+
+        var (_, mergedAlbums, _) = _mapper.MergeSearchResults(
+            new List<object>(), new List<object>(), new List<object>(),
+            externalResult, playlists, true);
+
+        Assert.Equal(2, mergedAlbums.Count);
+    }
+
+    [Fact]
+    public void MergeSearchResults_DedupesExternalPlaylists_CaseInsensitive()
+    {
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>(),
+            Albums = new List<Album>(),
+            Artists = new List<Artist>()
+        };
+        var playlists = new List<ExternalPlaylist>
+        {
+            new ExternalPlaylist
+            {
+                Id = "pl-qobuz-1",
+                Name = "Electroclash Essentials",
+                CuratorName = "Qobuz Steve",
+                Provider = "qobuz"
+            },
+            new ExternalPlaylist
+            {
+                Id = "pl-qobuz-2",
+                Name = "  electroclash   ESSENTIALS  ",
+                CuratorName = "qobuz steve",
+                Provider = "QOBUZ"
+            }
+        };
+
+        var (_, mergedAlbums, _) = _mapper.MergeSearchResults(
+            new List<object>(), new List<object>(), new List<object>(),
+            externalResult, playlists, true);
+
+        Assert.Single(mergedAlbums);
+    }
+
+    [Fact]
+    public void MergeSearchResults_Xml_DedupesExternalPlaylists_BySameProviderNameAndCurator()
+    {
+        var localAlbums = new List<object>
+        {
+            new XElement("album",
+                new XAttribute("id", "local-album-1"),
+                new XAttribute("name", "Some Local Album"),
+                new XAttribute("artist", "Some Artist"))
+        };
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>(),
+            Albums = new List<Album>(),
+            Artists = new List<Artist>()
+        };
+        var playlists = new List<ExternalPlaylist>
+        {
+            new ExternalPlaylist
+            {
+                Id = "pl-qobuz-1",
+                Name = "Electroclash Essentials",
+                CuratorName = "Qobuz Steve",
+                Provider = "qobuz"
+            },
+            new ExternalPlaylist
+            {
+                Id = "pl-qobuz-2",
+                Name = "Electroclash Essentials",
+                CuratorName = "Qobuz Steve",
+                Provider = "qobuz"
+            },
+            new ExternalPlaylist
+            {
+                Id = "pl-qobuz-3",
+                Name = "Electroclash Essentials",
+                CuratorName = "Qobuz Steve",
+                Provider = "qobuz"
+            }
+        };
+
+        var (_, mergedAlbums, _) = _mapper.MergeSearchResults(
+            new List<object>(), localAlbums, new List<object>(),
+            externalResult, playlists, false);
+
+        // 1 local album + 1 deduped playlist-as-album = 2
+        Assert.Equal(2, mergedAlbums.Count);
+    }
+
+    [Fact]
+    public void MergeSearchResults_KeepsExternalPlaylists_WhenNameMissing()
+    {
+        // Defensive: never collapse rows we cannot identify.
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>(),
+            Albums = new List<Album>(),
+            Artists = new List<Artist>()
+        };
+        var playlists = new List<ExternalPlaylist>
+        {
+            new ExternalPlaylist
+            {
+                Id = "pl-qobuz-1",
+                Name = "",
+                CuratorName = "Qobuz Steve",
+                Provider = "qobuz"
+            },
+            new ExternalPlaylist
+            {
+                Id = "pl-qobuz-2",
+                Name = "   ",
+                CuratorName = "Qobuz Steve",
+                Provider = "qobuz"
+            },
+            new ExternalPlaylist
+            {
+                Id = "pl-qobuz-3",
+                Name = "",
+                CuratorName = "Qobuz Steve",
+                Provider = "qobuz"
+            }
+        };
+
+        var (_, mergedAlbums, _) = _mapper.MergeSearchResults(
+            new List<object>(), new List<object>(), new List<object>(),
+            externalResult, playlists, true);
+
+        Assert.Equal(3, mergedAlbums.Count);
+    }
 }

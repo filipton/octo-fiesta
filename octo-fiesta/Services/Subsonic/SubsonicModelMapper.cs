@@ -215,8 +215,10 @@ public class SubsonicModelMapper
             }
             mergedAlbums.Add(_responseBuilder.ConvertAlbumToJson(album));
         }
-        // Playlists surfaced as albums; never deduped against local content.
-        foreach (var playlist in externalPlaylists)
+        // Playlists surfaced as albums. Providers (notably Qobuz) sometimes return several
+        // near-duplicate yearly snapshots of the same curated list, all sharing the same
+        // (provider, name, curator) tuple. Collapse those before emitting.
+        foreach (var playlist in DeduplicateExternalPlaylists(externalPlaylists))
         {
             mergedAlbums.Add(ConvertPlaylistToAlbumJson(playlist));
         }
@@ -320,7 +322,7 @@ public class SubsonicModelMapper
             }
             mergedAlbums.Add(_responseBuilder.ConvertAlbumToXml(album, ns));
         }
-        foreach (var playlist in externalPlaylists)
+        foreach (var playlist in DeduplicateExternalPlaylists(externalPlaylists))
         {
             mergedAlbums.Add(ConvertPlaylistToAlbumXml(playlist, ns));
         }
@@ -404,6 +406,76 @@ public class SubsonicModelMapper
             return null;
         }
         return artistKey + "\u0001" + titleKey;
+    }
+
+    /// <summary>
+    /// Collapses external playlists that share the same normalized
+    /// (provider, name, curator) tuple. Preserves insertion order and keeps the
+    /// first occurrence. Entries with an empty/whitespace <see cref="ExternalPlaylist.Name"/>
+    /// are passed through untouched so we never silently merge unidentified rows.
+    /// </summary>
+    private static IEnumerable<ExternalPlaylist> DeduplicateExternalPlaylists(
+        IEnumerable<ExternalPlaylist> playlists)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var playlist in playlists)
+        {
+            if (string.IsNullOrWhiteSpace(playlist.Name))
+            {
+                yield return playlist;
+                continue;
+            }
+
+            var providerKey = NormalizePlaylistKeyPart(playlist.Provider);
+            var nameKey = NormalizePlaylistKeyPart(playlist.Name);
+            var curatorKey = NormalizePlaylistKeyPart(playlist.CuratorName ?? string.Empty);
+            var key = providerKey + "\u0001" + nameKey + "\u0001" + curatorKey;
+
+            if (seen.Add(key))
+            {
+                yield return playlist;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Normalizes a single component of the playlist dedupe key. Builds on top of
+    /// <see cref="StringNormalizer.CreateComparisonKey"/> but additionally trims and
+    /// collapses runs of internal whitespace so trivial padding differences in the
+    /// provider's response don't keep otherwise identical playlists separate.
+    /// </summary>
+    private static string NormalizePlaylistKeyPart(string? input)
+    {
+        var normalized = StringNormalizer.CreateComparisonKey(input);
+        if (normalized.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var sb = new StringBuilder(normalized.Length);
+        var prevSpace = true;
+        foreach (var c in normalized)
+        {
+            if (char.IsWhiteSpace(c))
+            {
+                if (!prevSpace)
+                {
+                    sb.Append(' ');
+                    prevSpace = true;
+                }
+            }
+            else
+            {
+                sb.Append(c);
+                prevSpace = false;
+            }
+        }
+
+        if (sb.Length > 0 && sb[sb.Length - 1] == ' ')
+        {
+            sb.Length -= 1;
+        }
+        return sb.ToString();
     }
     
     /// <summary>
