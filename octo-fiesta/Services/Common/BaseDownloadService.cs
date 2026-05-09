@@ -451,6 +451,32 @@ public abstract class BaseDownloadService : IDownloadService
             if (!isCache)
             {
                 var existingMapping = await LocalLibraryService.GetMappingForExternalSongAsync(externalProvider, externalId);
+                if (existingMapping == null)
+                {
+                    // No mapping — the file may have been imported by another tool (e.g. alacarte).
+                    // Build the expected path and probe for it before hitting the network.
+                    var probeSong = await GetSongMetadataForTrackAsync(externalProvider, externalId);
+                    var existingPath = ProbeForExistingFile(
+                        PathHelper.BuildTrackPath(DownloadPath, probeSong, ".flac", SubsonicSettings.FolderTemplate, null));
+                    if (existingPath == null)
+                    {
+                        // Fallback: ask Navidrome — catches files with metadata-only matches
+                        var naviMatch = await LocalLibraryService.FindLocalSongByMetadataAsync(probeSong);
+                        if (naviMatch != null)
+                        {
+                            existingPath = naviMatch.LocalPath;
+                        }
+                    }
+                    if (existingPath != null)
+                    {
+                        Logger.LogInformation("Found existing local file without mapping, registering: {Path}", existingPath);
+                        await LocalLibraryService.RegisterDownloadedSongAsync(probeSong, existingPath, downloadedQuality: null);
+                        ourDownloadInfo.Status = DownloadStatus.Completed;
+                        ourDownloadInfo.CompletedAt = DateTime.UtcNow;
+                        ourDownloadInfo.LocalPath = existingPath;
+                        return existingPath;
+                    }
+                }
                 if (existingMapping != null && IOFile.Exists(existingMapping.LocalPath))
                 {
                     // Check if we should upgrade quality
@@ -730,8 +756,12 @@ public abstract class BaseDownloadService : IDownloadService
         var albumFolder = Path.GetDirectoryName(outputPath)!;
         EnsureDirectoryExists(albumFolder);
 
-        // Resolve unique path if file already exists
-        outputPath = PathHelper.ResolveUniquePath(outputPath);
+        if (IOFile.Exists(outputPath))
+        {
+            throw new InvalidOperationException(
+                $"Refusing to overwrite '{outputPath}' — file already exists and the pre-download check did not catch it. " +
+                "This indicates a bug in the pre-download existence probe.");
+        }
 
         try
         {
@@ -900,6 +930,18 @@ public abstract class BaseDownloadService : IDownloadService
                 {
                     Logger.LogDebug("Track {TrackId} already downloaded, skipping", track.ExternalId);
                     continue;
+                }
+
+                if (existingPath == null)
+                {
+                    var probedPath = ProbeForExistingFile(
+                        PathHelper.BuildTrackPath(DownloadPath, track, ".flac", SubsonicSettings.FolderTemplate, null));
+                    if (probedPath != null)
+                    {
+                        Logger.LogDebug("Track {TrackId} found on disk without mapping, skipping re-download", track.ExternalId);
+                        await LocalLibraryService.RegisterDownloadedSongAsync(track, probedPath, downloadedQuality: null);
+                        continue;
+                    }
                 }
 
                 // Check if download is already in progress or recently completed
@@ -1088,6 +1130,27 @@ public abstract class BaseDownloadService : IDownloadService
     #endregion
 
     #region Utility Methods
+
+    private static readonly string[] AudioExtensions = [".flac", ".mp3", ".m4a"];
+
+    private static string? ProbeForExistingFile(string basePath)
+    {
+        var dir = Path.GetDirectoryName(basePath);
+        var stemWithoutExt = Path.GetFileNameWithoutExtension(basePath);
+        if (dir == null || !Directory.Exists(dir))
+        {
+            return null;
+        }
+        foreach (var ext in AudioExtensions)
+        {
+            var candidate = Path.Combine(dir, stemWithoutExt + ext);
+            if (IOFile.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+        return null;
+    }
 
     /// <summary>
     /// Ensures a directory exists, creating it and all parent directories if necessary

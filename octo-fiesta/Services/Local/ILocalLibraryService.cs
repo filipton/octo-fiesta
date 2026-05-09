@@ -39,6 +39,13 @@ public interface ILocalLibraryService
     Task<string?> GetLocalIdForExternalSongAsync(string externalProvider, string externalId);
 
     /// <summary>
+    /// Searches Navidrome for a song that matches the given metadata (title + artist or title + album).
+    /// Returns the matched local Subsonic ID and an approximate local path when found, null otherwise.
+    /// Used as a fallback pre-download check for songs imported by external tools.
+    /// </summary>
+    Task<LocalSongMatch?> FindLocalSongByMetadataAsync(Song song);
+
+    /// <summary>
     /// Triggers or waits for library indexing, then resolves the local ID.
     /// </summary>
     Task<string?> WaitForLocalIdAfterScanAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);

@@ -332,6 +332,75 @@ public async Task RegisterDownloadedSongAsync(Song song, string localPath, strin
         }
     }
 
+    public async Task<LocalSongMatch?> FindLocalSongByMetadataAsync(Song song)
+    {
+        var title = song.Title;
+        var artist = song.Artist;
+        var album = song.Album;
+
+        if (string.IsNullOrWhiteSpace(title) || (string.IsNullOrWhiteSpace(artist) && string.IsNullOrWhiteSpace(album)))
+        {
+            return null;
+        }
+
+        try
+        {
+            var authQuery = BuildAuthQuery(_subsonicUserCredentials);
+            var queryText = string.Join(" ", new[] { artist, title }.Where(s => !string.IsNullOrWhiteSpace(s)));
+            var searchUrl = $"{_subsonicSettings.Url}/rest/search3?f=json&songCount=10&albumCount=0&artistCount=0&query={Uri.EscapeDataString(queryText)}{authQuery}";
+
+            var response = await _httpClient.GetAsync(searchUrl);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var content = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(content);
+
+            if (!doc.RootElement.TryGetProperty("subsonic-response", out var subsonicResponse) ||
+                !subsonicResponse.TryGetProperty("searchResult3", out var searchResult) ||
+                !searchResult.TryGetProperty("song", out var songNode))
+            {
+                return null;
+            }
+
+            var titleKey = StringNormalizer.CreateComparisonKey(title);
+            var artistKey = StringNormalizer.CreateComparisonKey(artist);
+            var albumKey = StringNormalizer.CreateComparisonKey(album);
+
+            foreach (var songElement in EnumerateSongs(songNode))
+            {
+                var candidateId = songElement.TryGetProperty("id", out var idEl) ? idEl.ToString() : null;
+                if (string.IsNullOrEmpty(candidateId))
+                {
+                    continue;
+                }
+
+                var candidateTitleKey = StringNormalizer.CreateComparisonKey(songElement.TryGetProperty("title", out var titleEl) ? titleEl.GetString() : null);
+                var candidateArtistKey = StringNormalizer.CreateComparisonKey(songElement.TryGetProperty("artist", out var artistEl) ? artistEl.GetString() : null);
+                var candidateAlbumKey = StringNormalizer.CreateComparisonKey(songElement.TryGetProperty("album", out var albumEl) ? albumEl.GetString() : null);
+                var candidatePath = songElement.TryGetProperty("path", out var pathEl) ? pathEl.GetString() : null;
+
+                var titleMatches = !string.IsNullOrEmpty(titleKey) && titleKey == candidateTitleKey;
+                var artistMatches = !string.IsNullOrEmpty(artistKey) && artistKey == candidateArtistKey;
+                var albumMatches = !string.IsNullOrEmpty(albumKey) && albumKey == candidateAlbumKey;
+
+                if ((titleMatches && artistMatches) || (titleMatches && albumMatches))
+                {
+                    return new LocalSongMatch(candidateId, candidatePath);
+                }
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "FindLocalSongByMetadataAsync failed for song '{Title}' by '{Artist}'", title, artist);
+            return null;
+        }
+    }
+
     public (bool isExternal, string? provider, string? externalId) ParseSongId(string songId)
     {
         var (isExternal, provider, _, externalId) = ParseExternalId(songId);
@@ -803,6 +872,11 @@ public async Task RegisterDownloadedSongAsync(Song song, string localPath, strin
         }
     }
 }
+
+/// <summary>
+/// Result of a Navidrome metadata-based song lookup
+/// </summary>
+public record LocalSongMatch(string LocalSubsonicId, string? LocalPath);
 
 /// <summary>
 /// Represents the mapping between an external song and its local file
