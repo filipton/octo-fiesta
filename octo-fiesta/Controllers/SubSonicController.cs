@@ -612,19 +612,22 @@ public class SubsonicController : ControllerBase
             {
                 if (song is Dictionary<string, object> dict && dict.TryGetValue("title", out var titleObj))
                 {
-                    var normalizedTitle = StringNormalizer.CreateComparisonKey(titleObj?.ToString() ?? "");
-                    localSongTitles.Add(normalizedTitle);
+                    var t = titleObj?.ToString() ?? "";
+                    localSongTitles.Add(StringNormalizer.CreateComparisonKey(t));
+                    localSongTitles.Add(StringNormalizer.CreateSongTitleDedupeKey(t));
                 }
             }
 
             var mergedSongs = localSongs.ToList();
             foreach (var externalSong in externalAlbum.Songs)
             {
-                var normalizedExternalTitle = StringNormalizer.CreateComparisonKey(externalSong.Title);
-                if (!localSongTitles.Contains(normalizedExternalTitle))
+                var ext = externalSong.Title ?? "";
+                if (localSongTitles.Contains(StringNormalizer.CreateComparisonKey(ext))
+                    || localSongTitles.Contains(StringNormalizer.CreateSongTitleDedupeKey(ext)))
                 {
-                    mergedSongs.Add(_responseBuilder.ConvertSongToJson(externalSong));
+                    continue;
                 }
+                mergedSongs.Add(_responseBuilder.ConvertSongToJson(externalSong));
             }
 
             mergedSongs = mergedSongs

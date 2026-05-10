@@ -408,6 +408,42 @@ public class SubsonicModelMapperTests
     }
 
     [Fact]
+    public void MergeSearchResults_DropsExternalSong_WhenLocalTitleMatchesWithoutFeat()
+    {
+        var localSongs = new List<object>
+        {
+            new Dictionary<string, object>
+            {
+                ["id"] = "local-boi",
+                ["title"] = "Boi",
+                ["artist"] = "JPEGMAFIA"
+            }
+        };
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>
+            {
+                new Song
+                {
+                    Id = "ext-qobuz-song-1",
+                    Title = "Boi (feat. Butch Dawson)",
+                    Artist = "JPEGMAFIA",
+                    ExternalProvider = "qobuz",
+                    ExternalId = "1"
+                }
+            },
+            Albums = new List<Album>(),
+            Artists = new List<Artist>()
+        };
+
+        var (mergedSongs, _, _) = _mapper.MergeSearchResults(
+            localSongs, new List<object>(), new List<object>(),
+            externalResult, new List<ExternalPlaylist>(), null, true);
+
+        Assert.Single(mergedSongs);
+    }
+
+    [Fact]
     public void MergeSearchResults_KeepsExternalSong_WhenMappingExistsButLocalIdMissing()
     {
         // User deleted the song from Navidrome but the mapping row still exists.

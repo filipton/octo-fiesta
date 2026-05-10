@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace octo_fiesta.Services.Common;
 
@@ -18,10 +19,15 @@ public static class StringNormalizer
         { '”', '"' },
         { '′', '\'' },
         { '″', '"' },
-        
+
         // Backticks to straight quotes
         { '`', '\'' }
     };
+
+    private static readonly Regex TrailingFeatSuffixRegex = new(
+        @"\s+[\(\[](feat\.|ft\.)[^\)\]]*[\)\]]\s*$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(250));
 
     /// <summary>
     /// Normalizes a string for comparison by standardizing quote characters.
@@ -69,6 +75,18 @@ public static class StringNormalizer
 
         return NormalizeForComparison(input).ToLowerInvariant();
     }
+
+    public static string CreateSongTitleDedupeKey(string? title)
+    {
+        var s = CreateComparisonKey(title);
+        while (true)
+        {
+            var next = TrailingFeatSuffixRegex.Replace(s, "").TrimEnd();
+            if (next.Length == s.Length && next == s)
+            {
+                return s;
+            }
+            s = next;
+        }
+    }
 }
-
-

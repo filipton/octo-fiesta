@@ -389,7 +389,7 @@ public class SubsonicModelMapper
     private static string? BuildSongKey(string? artist, string? title)
     {
         var artistKey = StringNormalizer.CreateComparisonKey(artist);
-        var titleKey = StringNormalizer.CreateComparisonKey(title);
+        var titleKey = StringNormalizer.CreateSongTitleDedupeKey(title);
         if (artistKey.Length == 0 || titleKey.Length == 0)
         {
             return null;
