@@ -181,7 +181,7 @@ public class SubsonicModelMapperTests
         {
             Songs = new List<Song>
             {
-                new Song { Id = "ext1", Title = "External Song" }
+                new Song {Title = "External Song" }
             },
             Albums = new List<Album>(),
             Artists = new List<Artist>()
@@ -234,7 +234,7 @@ public class SubsonicModelMapperTests
         {
             Songs = new List<Song>
             {
-                new Song { Id = "ext1", Title = "External Song" }
+                new Song {Title = "External Song" }
             },
             Albums = new List<Album>(),
             Artists = new List<Artist>()
@@ -281,7 +281,7 @@ public class SubsonicModelMapperTests
         // Arrange
         var externalResult = new SearchResult
         {
-            Songs = new List<Song> { new Song { Id = "ext1" } },
+            Songs = new List<Song> { new Song { Title = "ext1" } },
             Albums = new List<Album> { new Album { Id = "ext2" } },
             Artists = new List<Artist> { new Artist { Id = "ext3", Name = "Artist" } }
         };

@@ -322,9 +322,11 @@ public class SubsonicResponseBuilder
             size = (long)bitRate * 125L * (long)(song.Duration ?? 0);
         }
 
+        string songId = $"ext-{song.ExternalProvider}-song-{song.ExternalId}";
+
         var result = new Dictionary<string, object>
         {
-            ["id"] = song.Id,
+            ["id"] = songId,
             ["parent"] = song.AlbumId ?? "",
             ["isDir"] = false,
             ["title"] = song.Title,
@@ -351,7 +353,7 @@ public class SubsonicResponseBuilder
         // Only include coverArt if the song has a cover URL (avoids broken images for songs without covers)
         if (song.IsLocal || !string.IsNullOrEmpty(song.CoverArtUrl))
         {
-            result["coverArt"] = song.Id;
+            result["coverArt"] = songId;
         }
 
         if (created != null)
@@ -374,12 +376,13 @@ public class SubsonicResponseBuilder
             ["artist"] = album.Artist ?? "",
             ["artistId"] = album.ArtistId ?? "",
             ["songCount"] = album.SongCount ?? 0,
-            ["year"] = album.Year ?? 0,
             ["created"] = System.DateTime.UtcNow.ToString("o"),
             ["isExternal"] = !album.IsLocal,
             ["displayArtist"] = album.Artist ?? "",
             ["releaseTypes"] = album.ReleaseType != null ? new List<string> { album.ReleaseType } : new List<string>(),
         };
+
+        if (album.Year.HasValue) result["year"] = album.Year.Value;
 
         // Only include coverArt if the album has a cover URL (avoids broken images)
         if (album.IsLocal || !string.IsNullOrEmpty(album.CoverArtUrl))
@@ -455,8 +458,10 @@ public class SubsonicResponseBuilder
             size = (long)bitRate * 125L * duration;
         }
 
+        string songId = $"ext-{song.ExternalProvider}-song-{song.ExternalId}";
+
         var songElement = new XElement(ns + "song",
-            new XAttribute("id", song.Id),
+            new XAttribute("id", songId),
             new XAttribute("title", song.Title),
             new XAttribute("album", song.Album ?? ""),
             new XAttribute("albumId", albumId),
@@ -482,7 +487,7 @@ public class SubsonicResponseBuilder
         // Only include coverArt if the song has a cover URL (avoids broken images for songs without covers)
         if (song.IsLocal || !string.IsNullOrEmpty(song.CoverArtUrl))
         {
-            songElement.Add(new XAttribute("coverArt", song.Id));
+            songElement.Add(new XAttribute("coverArt", songId));
         }
 
         if (!string.IsNullOrEmpty(song.ArtistId))
@@ -512,11 +517,12 @@ public class SubsonicResponseBuilder
             new XAttribute("artistId", album.ArtistId ?? string.Empty),
             new XAttribute("songCount", album.Songs?.Count ?? album.SongCount ?? 0),
             new XAttribute("duration", totalDuration),
-            new XAttribute("year", album.Year ?? 0),
             new XAttribute("created", System.DateTime.UtcNow.ToString("o")),
             new XAttribute("isExternal", (!album.IsLocal).ToString().ToLower()),
             new XAttribute("displayArtist", album.Artist ?? "")
         );
+
+        if (album.Year.HasValue) element.Add(new XAttribute("year", album.Year.Value));
 
         // Only include coverArt if the album has a cover URL (avoids broken images)
         if (album.IsLocal || !string.IsNullOrEmpty(album.CoverArtUrl))

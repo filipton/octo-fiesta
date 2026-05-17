@@ -133,9 +133,10 @@ public class SubsonicController : ControllerBase
             int.TryParse(parameters.GetValueOrDefault("artistCount", "20"), out var arc) ? arc : 20
         );
         
-        // Search playlists if enabled
+        // Playlists are merged into the album section (search3 has no playlist field),
+        // so the limit is capped low to avoid masking real albums.
         Task<List<ExternalPlaylist>> playlistTask = _subsonicSettings.EnableExternalPlaylists
-            ? _metadataService.SearchPlaylistsAsync(cleanQuery, ac) // Use same limit as albums
+            ? _metadataService.SearchPlaylistsAsync(cleanQuery, Math.Min(ac, 5))
             : Task.FromResult(new List<ExternalPlaylist>());
 
         // Snapshot of downloaded-song mappings (cheap after first load) used during merge
