@@ -113,6 +113,16 @@ public class NavidromeUploadService : INavidromeUploadService
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
                 return ParseResponse(json);
             }
+            catch (HttpRequestException ex) when (attempt == 0 && IsBrokenPipe(ex))
+            {
+                // Navidrome rejected the request (likely 401) and closed the connection while
+                // the multipart body was still streaming, producing a broken-pipe IOException
+                // before we could read a response. Treat this as an auth failure: drop the
+                // cached token and retry once with a fresh JWT.
+                _logger.LogInformation(
+                    "Navidrome upload connection broken mid-stream (likely 401); refreshing JWT and retrying");
+                InvalidateToken();
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "Error uploading to Navidrome /api/upload");
@@ -291,6 +301,21 @@ public class NavidromeUploadService : INavidromeUploadService
             ".wav" => "audio/wav",
             _ => "application/octet-stream",
         };
+    }
+
+    private static bool IsBrokenPipe(Exception ex)
+    {
+        for (var e = ex as Exception; e != null; e = e.InnerException)
+        {
+            if (e is System.Net.Sockets.SocketException { SocketErrorCode: System.Net.Sockets.SocketError.Shutdown or System.Net.Sockets.SocketError.ConnectionReset }
+                || (e is System.Net.Sockets.SocketException se && (int)se.SocketErrorCode == 32) // EPIPE
+                || (e is IOException && e.Message.Contains("Broken pipe", StringComparison.OrdinalIgnoreCase))
+                || (e is IOException && e.Message.Contains("transport connection", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static string Truncate(string s, int max) =>
