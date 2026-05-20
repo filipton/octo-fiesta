@@ -339,7 +339,6 @@ public class SubsonicModelMapperTests
             {
                 new Song
                 {
-                    Id = "ext-qobuz-song-123",
                     Title = "Different Title",
                     Artist = "Different Artist",
                     ExternalProvider = "qobuz",
@@ -387,7 +386,6 @@ public class SubsonicModelMapperTests
             {
                 new Song
                 {
-                    Id = "ext-qobuz-song-999",
                     Title = "Let It Happen",
                     Artist = "Tame Impala",
                     ExternalProvider = "qobuz",
@@ -425,7 +423,6 @@ public class SubsonicModelMapperTests
             {
                 new Song
                 {
-                    Id = "ext-qobuz-song-1",
                     Title = "Boi (feat. Butch Dawson)",
                     Artist = "JPEGMAFIA",
                     ExternalProvider = "qobuz",
@@ -456,7 +453,6 @@ public class SubsonicModelMapperTests
             {
                 new Song
                 {
-                    Id = "ext-qobuz-song-123",
                     Title = "Orphan Track",
                     Artist = "Some Artist",
                     ExternalProvider = "qobuz",
@@ -527,8 +523,8 @@ public class SubsonicModelMapperTests
         {
             Songs = new List<Song>
             {
-                new Song { Id = "ext-1", Title = "A", Artist = "Artist", ExternalProvider = "qobuz", ExternalId = "1" },
-                new Song { Id = "ext-2", Title = "B", Artist = "Artist", ExternalProvider = "qobuz", ExternalId = "2" }
+                new Song { Title = "A", Artist = "Artist", ExternalProvider = "qobuz", ExternalId = "1" },
+                new Song { Title = "B", Artist = "Artist", ExternalProvider = "qobuz", ExternalId = "2" }
             },
             Albums = new List<Album>
             {
@@ -592,7 +588,6 @@ public class SubsonicModelMapperTests
             {
                 new Song
                 {
-                    Id = "ext-qobuz-song-123",
                     Title = "Different Title",
                     Artist = "Different Artist",
                     ExternalProvider = "qobuz",

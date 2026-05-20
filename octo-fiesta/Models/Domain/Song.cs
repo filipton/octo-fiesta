@@ -4,7 +4,7 @@ namespace octo_fiesta.Models.Domain;
 /// Represents a song (local or external)
 /// </summary>
 public class Song
-{    
+{
     public string Title { get; set; } = string.Empty;
     public string Artist { get; set; } = string.Empty;
     public string? ArtistId { get; set; }

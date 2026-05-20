@@ -129,7 +129,8 @@ public class SubsonicControllerCoverArtTests
             .Setup(x => x.GetSongAsync("qobuz", "song-abc"))
             .ReturnsAsync(new Models.Domain.Song
             {
-                Id = "ext-qobuz-song-song-abc",
+                ExternalId = "song-abc",
+                ExternalProvider = "qobuz",
                 AlbumId = "ext-qobuz-album-album-abc",
                 CoverArtUrl = "https://static.qobuz.com/images/covers/aa/bb/song_600.jpg"
             });
@@ -208,7 +209,8 @@ public class SubsonicControllerCoverArtTests
             .Setup(x => x.GetSongAsync("qobuz", "song-abc"))
             .ReturnsAsync(new Models.Domain.Song
             {
-                Id = "ext-qobuz-song-song-abc",
+                ExternalId = "song-abc",
+                ExternalProvider = "qobuz",
                 AlbumId = "ext-qobuz-album-album-abc",
                 CoverArtUrl = "https://static.qobuz.com/images/covers/aa/bb/song_600.jpg"
             });

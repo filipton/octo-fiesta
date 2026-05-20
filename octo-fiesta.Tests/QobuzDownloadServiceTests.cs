@@ -88,7 +88,7 @@ public class QobuzDownloadServiceTests : IDisposable
 
         var serviceProviderMock = new Mock<IServiceProvider>();
         serviceProviderMock.Setup(sp => sp.GetService(typeof(octo_fiesta.Services.Subsonic.PlaylistSyncService)))
-            .Returns(null);
+            .Returns((object?)null);
 
         return new QobuzDownloadService(
             _httpClientFactoryMock.Object,
@@ -359,7 +359,7 @@ public class QobuzDownloadServiceTests : IDisposable
     #region Quality Format Tests
 
     [Fact]
-    public async Task CreateService_WithFlacQuality_UsesCorrectFormat()
+    public void CreateService_WithFlacQuality_UsesCorrectFormat()
     {
         // Arrange & Act
         var service = CreateService(
@@ -372,7 +372,7 @@ public class QobuzDownloadServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateService_WithMp3Quality_UsesCorrectFormat()
+    public void CreateService_WithMp3Quality_UsesCorrectFormat()
     {
         // Arrange & Act
         var service = CreateService(
@@ -385,7 +385,7 @@ public class QobuzDownloadServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateService_WithNullQuality_UsesDefaultFormat()
+    public void CreateService_WithNullQuality_UsesDefaultFormat()
     {
         // Arrange & Act
         var service = CreateService(
