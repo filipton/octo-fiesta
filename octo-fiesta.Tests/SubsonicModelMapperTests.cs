@@ -588,7 +588,6 @@ public class SubsonicModelMapperTests
             {
                 new Song
                 {
-                    Id = "ext-1",
                     Title = "Track One",
                     Artist = "Leroy",
                     ExternalProvider = "qobuz",
