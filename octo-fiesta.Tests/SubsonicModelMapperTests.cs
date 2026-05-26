@@ -196,7 +196,7 @@ public class SubsonicModelMapperTests
     }
 
     [Fact]
-    public void MergeSearchResults_Json_CaseInsensitiveDeduplication()
+    public void MergeSearchResults_Json_CaseSensitiveArtistDedup()
     {
         // Arrange
         var localArtists = new List<object>
@@ -209,16 +209,14 @@ public class SubsonicModelMapperTests
             Albums = new List<Album>(),
             Artists = new List<Artist>
             {
-                new Artist { Id = "ext1", Name = "test artist" } // Different case - should still be filtered
+                new Artist { Id = "ext1", Name = "test artist" }
             }
         };
 
-        // Act
         var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
             new List<object>(), new List<object>(), localArtists, externalResult, new List<ExternalPlaylist>(), true);
 
-        // Assert
-        Assert.Single(mergedArtists); // Only the local artist
+        Assert.Equal(2, mergedArtists.Count);
     }
 
     [Fact]
@@ -569,7 +567,43 @@ public class SubsonicModelMapperTests
             externalResult, new List<ExternalPlaylist>(),
             new Dictionary<string, LocalSongMapping>(), true);
 
-        Assert.Equal(2, mergedArtists.Count); // 1 local + 1 ext (the duplicate is filtered)
+        Assert.Equal(3, mergedArtists.Count);
+    }
+
+    [Fact]
+    public void MergeSearchResults_KeepsExternalSong_WhenArtistDiffersOnlyByCase()
+    {
+        var localSongs = new List<object>
+        {
+            new Dictionary<string, object>
+            {
+                ["id"] = "local-1",
+                ["title"] = "Track One",
+                ["artist"] = "leroy"
+            }
+        };
+        var externalResult = new SearchResult
+        {
+            Songs = new List<Song>
+            {
+                new Song
+                {
+                    Id = "ext-1",
+                    Title = "Track One",
+                    Artist = "Leroy",
+                    ExternalProvider = "qobuz",
+                    ExternalId = "1"
+                }
+            },
+            Albums = new List<Album>(),
+            Artists = new List<Artist>()
+        };
+
+        var (mergedSongs, _, _) = _mapper.MergeSearchResults(
+            localSongs, new List<object>(), new List<object>(),
+            externalResult, new List<ExternalPlaylist>(), null, true);
+
+        Assert.Equal(2, mergedSongs.Count);
     }
 
     [Fact]
@@ -728,7 +762,7 @@ public class SubsonicModelMapperTests
     }
 
     [Fact]
-    public void MergeSearchResults_DedupesExternalPlaylists_CaseInsensitive()
+    public void MergeSearchResults_DedupesExternalPlaylists_CaseSensitive()
     {
         var externalResult = new SearchResult
         {
@@ -758,7 +792,7 @@ public class SubsonicModelMapperTests
             new List<object>(), new List<object>(), new List<object>(),
             externalResult, playlists, true);
 
-        Assert.Single(mergedAlbums);
+        Assert.Equal(2, mergedAlbums.Count);
     }
 
     [Fact]

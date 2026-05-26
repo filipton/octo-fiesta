@@ -100,18 +100,12 @@ public class StringNormalizerTests
     }
 
     [Fact]
-    public void CreateComparisonKey_WithMixedCase_ReturnsCaseInsensitiveKey()
+    public void CreateComparisonKey_WithMixedCase_ReturnsDistinctKeys()
     {
-        // Arrange
-        var input1 = "It'S A Song";
-        var input2 = "it's a song";
+        var key1 = StringNormalizer.CreateComparisonKey("It'S A Song");
+        var key2 = StringNormalizer.CreateComparisonKey("it's a song");
 
-        // Act
-        var key1 = StringNormalizer.CreateComparisonKey(input1);
-        var key2 = StringNormalizer.CreateComparisonKey(input2);
-
-        // Assert
-        Assert.Equal(key1, key2);
+        Assert.NotEqual(key1, key2);
     }
 
     [Fact]
@@ -135,21 +129,21 @@ public class StringNormalizerTests
     [Fact]
     public void CreateSongTitleDedupeKey_StripsTrailingFeatParens()
     {
-        Assert.Equal("boi", StringNormalizer.CreateSongTitleDedupeKey("Boi (feat. Butch Dawson)"));
+        Assert.Equal("Boi", StringNormalizer.CreateSongTitleDedupeKey("Boi (feat. Butch Dawson)"));
     }
 
     [Fact]
     public void CreateSongTitleDedupeKey_StripsTrailingFeatBrackets()
     {
         Assert.Equal(
-            "praise the lord (da shine)",
+            "Praise The Lord (Da Shine)",
             StringNormalizer.CreateSongTitleDedupeKey("Praise The Lord (Da Shine) [feat. Skepta]"));
     }
 
     [Fact]
     public void CreateSongTitleDedupeKey_LeavesRemasteredSuffix()
     {
-        Assert.Equal("song (remastered)", StringNormalizer.CreateSongTitleDedupeKey("Song (Remastered)"));
+        Assert.Equal("Song (Remastered)", StringNormalizer.CreateSongTitleDedupeKey("Song (Remastered)"));
     }
 
     [Fact]
@@ -159,5 +153,12 @@ public class StringNormalizerTests
             StringNormalizer.CreateSongTitleDedupeKey("Boi"),
             StringNormalizer.CreateSongTitleDedupeKey("Boi (feat. Butch Dawson)"));
     }
-}
 
+    [Fact]
+    public void CreateSongTitleDedupeKey_WithMixedCase_ReturnsDistinctKeys()
+    {
+        Assert.NotEqual(
+            StringNormalizer.CreateSongTitleDedupeKey("Boi"),
+            StringNormalizer.CreateSongTitleDedupeKey("boi"));
+    }
+}

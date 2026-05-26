@@ -213,7 +213,7 @@ public async Task RegisterDownloadedSongAsync(Song song, string localPath, strin
                 return null;
             }
 
-            var titleKey = StringNormalizer.CreateComparisonKey(title);
+            var titleKey = StringNormalizer.CreateSongTitleDedupeKey(title);
             var artistKey = StringNormalizer.CreateComparisonKey(artist);
             var albumKey = StringNormalizer.CreateComparisonKey(album);
 
@@ -227,7 +227,7 @@ public async Task RegisterDownloadedSongAsync(Song song, string localPath, strin
                     continue;
                 }
 
-                var candidateTitleKey = StringNormalizer.CreateComparisonKey(songElement.TryGetProperty("title", out var titleEl) ? titleEl.GetString() : null);
+                var candidateTitleKey = StringNormalizer.CreateSongTitleDedupeKey(songElement.TryGetProperty("title", out var titleEl) ? titleEl.GetString() : null);
                 var candidateArtistKey = StringNormalizer.CreateComparisonKey(songElement.TryGetProperty("artist", out var artistEl) ? artistEl.GetString() : null);
                 var candidateAlbumKey = StringNormalizer.CreateComparisonKey(songElement.TryGetProperty("album", out var albumEl) ? albumEl.GetString() : null);
 
@@ -365,7 +365,7 @@ public async Task RegisterDownloadedSongAsync(Song song, string localPath, strin
                 return null;
             }
 
-            var titleKey = StringNormalizer.CreateComparisonKey(title);
+            var titleKey = StringNormalizer.CreateSongTitleDedupeKey(title);
             var artistKey = StringNormalizer.CreateComparisonKey(artist);
             var albumKey = StringNormalizer.CreateComparisonKey(album);
 
@@ -377,7 +377,7 @@ public async Task RegisterDownloadedSongAsync(Song song, string localPath, strin
                     continue;
                 }
 
-                var candidateTitleKey = StringNormalizer.CreateComparisonKey(songElement.TryGetProperty("title", out var titleEl) ? titleEl.GetString() : null);
+                var candidateTitleKey = StringNormalizer.CreateSongTitleDedupeKey(songElement.TryGetProperty("title", out var titleEl) ? titleEl.GetString() : null);
                 var candidateArtistKey = StringNormalizer.CreateComparisonKey(songElement.TryGetProperty("artist", out var artistEl) ? artistEl.GetString() : null);
                 var candidateAlbumKey = StringNormalizer.CreateComparisonKey(songElement.TryGetProperty("album", out var albumEl) ? albumEl.GetString() : null);
                 var candidatePath = songElement.TryGetProperty("path", out var pathEl) ? pathEl.GetString() : null;

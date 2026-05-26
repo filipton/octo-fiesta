@@ -223,20 +223,19 @@ public class SubsonicModelMapper
             mergedAlbums.Add(ConvertPlaylistToAlbumJson(playlist));
         }
 
-        // Deduplicate artists by name - prefer local artists over external ones
-        var localArtistNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var localArtistNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var artist in localArtists)
         {
             if (artist is Dictionary<string, object> dict && dict.TryGetValue("name", out var nameObj))
             {
-                localArtistNames.Add(nameObj?.ToString() ?? "");
+                localArtistNames.Add(StringNormalizer.CreateComparisonKey(nameObj?.ToString()));
             }
         }
 
         var mergedArtists = localArtists.ToList();
         foreach (var externalArtist in externalResult.Artists)
         {
-            if (!localArtistNames.Contains(externalArtist.Name))
+            if (!localArtistNames.Contains(StringNormalizer.CreateComparisonKey(externalArtist.Name)))
             {
                 mergedArtists.Add(_responseBuilder.ConvertArtistToJson(externalArtist));
             }
@@ -284,8 +283,7 @@ public class SubsonicModelMapper
             }
         }
 
-        // Deduplicate artists by name - prefer local artists over external ones
-        var localArtistNamesXml = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var localArtistNamesXml = new HashSet<string>(StringComparer.Ordinal);
         var mergedArtists = new List<object>();
 
         foreach (var artist in localArtists.Cast<XElement>())
@@ -293,7 +291,7 @@ public class SubsonicModelMapper
             var name = artist.Attribute("name")?.Value;
             if (!string.IsNullOrEmpty(name))
             {
-                localArtistNamesXml.Add(name);
+                localArtistNamesXml.Add(StringNormalizer.CreateComparisonKey(name));
             }
             artist.Name = ns + "artist";
             mergedArtists.Add(artist);
@@ -301,7 +299,7 @@ public class SubsonicModelMapper
 
         foreach (var artist in externalResult.Artists)
         {
-            if (!localArtistNamesXml.Contains(artist.Name))
+            if (!localArtistNamesXml.Contains(StringNormalizer.CreateComparisonKey(artist.Name)))
             {
                 mergedArtists.Add(_responseBuilder.ConvertArtistToXml(artist, ns));
             }
