@@ -1,6 +1,4 @@
 using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Drawing;
-using SixLabors.ImageSharp.Drawing.Processing;
 using SixLabors.ImageSharp.Formats;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Formats.Png;
@@ -11,37 +9,28 @@ namespace octo_fiesta.Services.Subsonic;
 
 public interface ICoverArtTransformer
 {
-    Task<CoverArtTransformResult> AddExternalPillAsync(byte[] sourceBytes, string contentType, CancellationToken cancellationToken = default);
+    Task<CoverArtTransformResult> ApplyExternalTreatmentAsync(byte[] sourceBytes, string contentType, CancellationToken cancellationToken = default);
 }
 
 public sealed record CoverArtTransformResult(byte[] Bytes, string ContentType);
 
 public sealed class CoverArtTransformer : ICoverArtTransformer
 {
-    private static readonly Color BadgeBackground = Color.FromRgba(220, 38, 38, 178);
-    private static readonly Color BadgeForeground = Color.FromRgba(255, 255, 255, 230);
-    private static readonly Color BadgeRing = Color.FromRgba(255, 255, 255, 92);
+    private const float SaturationFactor = 0.4f;
+    private const float TriangleDivisor = 4.5f;
+    private const int TriangleFloorPx = 30;
 
-    public async Task<CoverArtTransformResult> AddExternalPillAsync(
+    public async Task<CoverArtTransformResult> ApplyExternalTreatmentAsync(
         byte[] sourceBytes,
         string contentType,
         CancellationToken cancellationToken = default)
     {
         var format = Image.DetectFormat(sourceBytes);
         using var image = Image.Load<Rgba32>(sourceBytes);
-        var shortestSide = Math.Min(image.Width, image.Height);
-        var badgeRadius = Math.Max(8f, shortestSide / 6.8f);
-        var margin = Math.Max(3f, shortestSide / 24f);
-        var ringWidth = Math.Max(1f, shortestSide / 150f);
-        var center = new PointF(image.Width - margin - badgeRadius, image.Height - margin - badgeRadius);
-        var iconScale = badgeRadius / 24f;
 
-        image.Mutate(ctx =>
-        {
-            ctx.Fill(BadgeBackground, new EllipsePolygon(center, badgeRadius));
-            ctx.Draw(BadgeRing, ringWidth, new EllipsePolygon(center, badgeRadius));
-            DrawNetworkIcon(ctx, center, iconScale);
-        });
+        image.Mutate(ctx => ctx.Saturate(SaturationFactor));
+
+        DrawFrostedCornerTriangle(image);
 
         await using var output = new MemoryStream();
         var encoder = GetEncoder(contentType, format);
@@ -49,28 +38,53 @@ public sealed class CoverArtTransformer : ICoverArtTransformer
         return new CoverArtTransformResult(output.ToArray(), GetOutputContentType(contentType, format));
     }
 
-    private static void DrawNetworkIcon(IImageProcessingContext ctx, PointF center, float scale)
+    private static void DrawFrostedCornerTriangle(Image<Rgba32> image)
     {
-        var top = new PointF(center.X, center.Y - 7.5f * scale);
-        var left = new PointF(center.X - 8f * scale, center.Y + 5.5f * scale);
-        var right = new PointF(center.X + 8f * scale, center.Y + 5.5f * scale);
-        var lineWidth = Math.Max(1.4f, 2.8f * scale);
-        var nodeRadius = Math.Max(2f, 3.6f * scale);
+        var shortestSide = Math.Min(image.Width, image.Height);
+        var size = Math.Max(TriangleFloorPx, (int)Math.Round(shortestSide / TriangleDivisor));
+        size = Math.Min(size, shortestSide / 2);
+        if (size <= 2)
+        {
+            return;
+        }
 
-        DrawLine(ctx, top, left, lineWidth);
-        DrawLine(ctx, top, right, lineWidth);
-        DrawLine(ctx, left, right, lineWidth);
-        ctx.Fill(BadgeForeground, new EllipsePolygon(top, nodeRadius));
-        ctx.Fill(BadgeForeground, new EllipsePolygon(left, nodeRadius));
-        ctx.Fill(BadgeForeground, new EllipsePolygon(right, nodeRadius));
+        var blurRadius = Math.Max(2, size / 5);
+        var edgeWidth = Math.Max(2, (int)Math.Round(size / 14.0));
+
+        using var blurred = image.Clone(c => c.BoxBlur(blurRadius));
+
+        var width = image.Width;
+        var fillTint = new Rgba32(255, 255, 255, (byte)(255 * 0.22f));
+        var edgeTint = new Rgba32(0, 0, 0, (byte)(255 * 0.78f));
+
+        image.ProcessPixelRows(blurred, (target, source) =>
+        {
+            for (var y = 0; y < size; y++)
+            {
+                var targetRow = target.GetRowSpan(y);
+                var sourceRow = source.GetRowSpan(y);
+                var rowWidth = size - y;
+                var startX = width - rowWidth;
+
+                for (var x = startX; x < width; x++)
+                {
+                    var isEdge = (x - startX) < edgeWidth;
+                    var tint = isEdge ? edgeTint : fillTint;
+                    targetRow[x] = AlphaBlend(sourceRow[x], tint);
+                }
+            }
+        });
     }
 
-    private static void DrawLine(IImageProcessingContext ctx, PointF from, PointF to, float width)
+    private static Rgba32 AlphaBlend(Rgba32 background, Rgba32 foreground)
     {
-        var path = new PathBuilder()
-            .AddLine(from, to)
-            .Build();
-        ctx.Draw(BadgeForeground, width, path);
+        var alpha = foreground.A / 255f;
+        var inv = 1f - alpha;
+        return new Rgba32(
+            (byte)(foreground.R * alpha + background.R * inv),
+            (byte)(foreground.G * alpha + background.G * inv),
+            (byte)(foreground.B * alpha + background.B * inv),
+            background.A);
     }
 
     private static IImageEncoder GetEncoder(string contentType, IImageFormat sourceFormat)

@@ -101,7 +101,7 @@ public class SubsonicControllerCoverArtTests
 
         var transformerMock = new Mock<ICoverArtTransformer>();
         transformerMock
-            .Setup(x => x.AddExternalPillAsync(It.IsAny<byte[]>(), "image/jpeg", It.IsAny<CancellationToken>()))
+            .Setup(x => x.ApplyExternalTreatmentAsync(It.IsAny<byte[]>(), "image/jpeg", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CoverArtTransformResult([9, 9, 9], "image/jpeg"));
 
         var controller = CreateController(
@@ -117,7 +117,7 @@ public class SubsonicControllerCoverArtTests
         Assert.Equal([9, 9, 9], first.FileContents);
         Assert.Equal([9, 9, 9], second.FileContents);
         transformerMock.Verify(
-            x => x.AddExternalPillAsync(It.IsAny<byte[]>(), "image/jpeg", It.IsAny<CancellationToken>()),
+            x => x.ApplyExternalTreatmentAsync(It.IsAny<byte[]>(), "image/jpeg", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -145,7 +145,7 @@ public class SubsonicControllerCoverArtTests
 
         var transformerMock = new Mock<ICoverArtTransformer>();
         transformerMock
-            .Setup(x => x.AddExternalPillAsync(It.IsAny<byte[]>(), "image/jpeg", It.IsAny<CancellationToken>()))
+            .Setup(x => x.ApplyExternalTreatmentAsync(It.IsAny<byte[]>(), "image/jpeg", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CoverArtTransformResult([8, 8, 8], "image/jpeg"));
 
         var controller = CreateController(
@@ -162,7 +162,7 @@ public class SubsonicControllerCoverArtTests
         Assert.Equal([8, 8, 8], first.FileContents);
         Assert.Equal([8, 8, 8], second.FileContents);
         transformerMock.Verify(
-            x => x.AddExternalPillAsync(It.IsAny<byte[]>(), "image/jpeg", It.IsAny<CancellationToken>()),
+            x => x.ApplyExternalTreatmentAsync(It.IsAny<byte[]>(), "image/jpeg", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -194,7 +194,7 @@ public class SubsonicControllerCoverArtTests
 
         Assert.Equal([1, 2, 3], result.FileContents);
         transformerMock.Verify(
-            x => x.AddExternalPillAsync(It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            x => x.ApplyExternalTreatmentAsync(It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -236,7 +236,7 @@ public class SubsonicControllerCoverArtTests
 
         Assert.Equal([1, 2, 3], result.FileContents);
         transformerMock.Verify(
-            x => x.AddExternalPillAsync(It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            x => x.ApplyExternalTreatmentAsync(It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 }
