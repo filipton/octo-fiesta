@@ -228,14 +228,14 @@ public class SubsonicModelMapper
         {
             if (artist is Dictionary<string, object> dict && dict.TryGetValue("name", out var nameObj))
             {
-                localArtistNames.Add(StringNormalizer.CreateComparisonKey(nameObj?.ToString()));
+                localArtistNames.Add(StringNormalizer.CreateArtistComparisonKey(nameObj?.ToString()));
             }
         }
 
         var mergedArtists = localArtists.ToList();
         foreach (var externalArtist in externalResult.Artists)
         {
-            if (!localArtistNames.Contains(StringNormalizer.CreateComparisonKey(externalArtist.Name)))
+            if (!localArtistNames.Contains(StringNormalizer.CreateArtistComparisonKey(externalArtist.Name)))
             {
                 mergedArtists.Add(_responseBuilder.ConvertArtistToJson(externalArtist));
             }
@@ -291,7 +291,7 @@ public class SubsonicModelMapper
             var name = artist.Attribute("name")?.Value;
             if (!string.IsNullOrEmpty(name))
             {
-                localArtistNamesXml.Add(StringNormalizer.CreateComparisonKey(name));
+                localArtistNamesXml.Add(StringNormalizer.CreateArtistComparisonKey(name));
             }
             artist.Name = ns + "artist";
             mergedArtists.Add(artist);
@@ -299,7 +299,7 @@ public class SubsonicModelMapper
 
         foreach (var artist in externalResult.Artists)
         {
-            if (!localArtistNamesXml.Contains(StringNormalizer.CreateComparisonKey(artist.Name)))
+            if (!localArtistNamesXml.Contains(StringNormalizer.CreateArtistComparisonKey(artist.Name)))
             {
                 mergedArtists.Add(_responseBuilder.ConvertArtistToXml(artist, ns));
             }

@@ -571,7 +571,7 @@ public class SubsonicModelMapperTests
     }
 
     [Fact]
-    public void MergeSearchResults_KeepsExternalSong_WhenArtistDiffersOnlyByCase()
+    public void MergeSearchResults_DropsExternalSong_WhenArtistDiffersOnlyByCase()
     {
         var localSongs = new List<object>
         {
@@ -602,7 +602,7 @@ public class SubsonicModelMapperTests
             localSongs, new List<object>(), new List<object>(),
             externalResult, new List<ExternalPlaylist>(), null, true);
 
-        Assert.Equal(2, mergedSongs.Count);
+        Assert.Single(mergedSongs);
     }
 
     [Fact]
@@ -761,7 +761,7 @@ public class SubsonicModelMapperTests
     }
 
     [Fact]
-    public void MergeSearchResults_DedupesExternalPlaylists_CaseSensitive()
+    public void MergeSearchResults_DedupesExternalPlaylists_CaseInsensitive()
     {
         var externalResult = new SearchResult
         {
@@ -791,7 +791,7 @@ public class SubsonicModelMapperTests
             new List<object>(), new List<object>(), new List<object>(),
             externalResult, playlists, true);
 
-        Assert.Equal(2, mergedAlbums.Count);
+        Assert.Single(mergedAlbums);
     }
 
     [Fact]

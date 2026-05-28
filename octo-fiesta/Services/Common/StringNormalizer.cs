@@ -65,8 +65,18 @@ public static class StringNormalizer
     /// Useful for HashSet lookups with normalized values.
     /// </summary>
     /// <param name="input">String to create a key for.</param>
-    /// <returns>Normalized string suitable for comparison.</returns>
+    /// <returns>Normalized string suitable for case-insensitive comparison.</returns>
     public static string CreateComparisonKey(string? input)
+    {
+        if (string.IsNullOrEmpty(input))
+        {
+            return "";
+        }
+
+        return NormalizeForComparison(input).ToLowerInvariant();
+    }
+
+    public static string CreateArtistComparisonKey(string? input)
     {
         if (string.IsNullOrEmpty(input))
         {
@@ -78,7 +88,7 @@ public static class StringNormalizer
 
     public static string CreateSongTitleDedupeKey(string? title)
     {
-        var s = NormalizeForComparison(title);
+        var s = CreateComparisonKey(title);
         while (true)
         {
             var next = TrailingFeatSuffixRegex.Replace(s, "").TrimEnd();

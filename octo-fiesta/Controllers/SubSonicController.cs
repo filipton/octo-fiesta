@@ -412,7 +412,7 @@ public class SubsonicController : ControllerBase
         if (externalArtists.Count > 0)
         {
             var externalArtist = externalArtists[0];
-            if (StringNormalizer.CreateComparisonKey(externalArtist.Name) == StringNormalizer.CreateComparisonKey(artistName))
+            if (StringNormalizer.CreateArtistComparisonKey(externalArtist.Name) == StringNormalizer.CreateArtistComparisonKey(artistName))
             {
                 externalAlbums = await _metadataService.GetArtistAlbumsAsync(externalArtist.ExternalProvider!, externalArtist.ExternalId!);
 
@@ -576,25 +576,27 @@ public class SubsonicController : ControllerBase
         var externalAlbumsSearch = await _metadataService.SearchAlbumsAsync(searchQuery, 5);
         Album? externalAlbum = null;
         
+        // Find matching album on external service (exact match first)
         foreach (var candidate in externalAlbumsSearch)
         {
             if (candidate.Artist != null && 
-                candidate.Artist.Equals(artistName, StringComparison.Ordinal) &&
-                candidate.Title.Equals(albumName, StringComparison.Ordinal))
+                candidate.Artist.Equals(artistName, StringComparison.OrdinalIgnoreCase) &&
+                candidate.Title.Equals(albumName, StringComparison.OrdinalIgnoreCase))
             {
                 externalAlbum = await _metadataService.GetAlbumAsync(candidate.ExternalProvider!, candidate.ExternalId!);
                 break;
             }
         }
 
+        // Fallback to fuzzy match
         if (externalAlbum == null)
         {
             foreach (var candidate in externalAlbumsSearch)
             {
                 if (candidate.Artist != null && 
-                    candidate.Artist.Contains(artistName, StringComparison.Ordinal) &&
-                    (candidate.Title.Contains(albumName, StringComparison.Ordinal) ||
-                     albumName.Contains(candidate.Title, StringComparison.Ordinal)))
+                    candidate.Artist.Contains(artistName, StringComparison.OrdinalIgnoreCase) &&
+                    (candidate.Title.Contains(albumName, StringComparison.OrdinalIgnoreCase) ||
+                     albumName.Contains(candidate.Title, StringComparison.OrdinalIgnoreCase)))
                 {
                     externalAlbum = await _metadataService.GetAlbumAsync(candidate.ExternalProvider!, candidate.ExternalId!);
                     break;
@@ -610,6 +612,7 @@ public class SubsonicController : ControllerBase
                 if (song is Dictionary<string, object> dict && dict.TryGetValue("title", out var titleObj))
                 {
                     var t = titleObj?.ToString() ?? "";
+                    localSongTitles.Add(StringNormalizer.CreateComparisonKey(t));
                     localSongTitles.Add(StringNormalizer.CreateSongTitleDedupeKey(t));
                 }
             }
@@ -618,7 +621,8 @@ public class SubsonicController : ControllerBase
             foreach (var externalSong in externalAlbum.Songs)
             {
                 var ext = externalSong.Title ?? "";
-                if (localSongTitles.Contains(StringNormalizer.CreateSongTitleDedupeKey(ext)))
+                if (localSongTitles.Contains(StringNormalizer.CreateComparisonKey(ext))
+                    || localSongTitles.Contains(StringNormalizer.CreateSongTitleDedupeKey(ext)))
                 {
                     continue;
                 }

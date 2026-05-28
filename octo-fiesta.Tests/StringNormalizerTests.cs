@@ -100,12 +100,12 @@ public class StringNormalizerTests
     }
 
     [Fact]
-    public void CreateComparisonKey_WithMixedCase_ReturnsDistinctKeys()
+    public void CreateComparisonKey_WithMixedCase_ReturnsCaseInsensitiveKey()
     {
         var key1 = StringNormalizer.CreateComparisonKey("It'S A Song");
         var key2 = StringNormalizer.CreateComparisonKey("it's a song");
 
-        Assert.NotEqual(key1, key2);
+        Assert.Equal(key1, key2);
     }
 
     [Fact]
@@ -129,21 +129,21 @@ public class StringNormalizerTests
     [Fact]
     public void CreateSongTitleDedupeKey_StripsTrailingFeatParens()
     {
-        Assert.Equal("Boi", StringNormalizer.CreateSongTitleDedupeKey("Boi (feat. Butch Dawson)"));
+        Assert.Equal("boi", StringNormalizer.CreateSongTitleDedupeKey("Boi (feat. Butch Dawson)"));
     }
 
     [Fact]
     public void CreateSongTitleDedupeKey_StripsTrailingFeatBrackets()
     {
         Assert.Equal(
-            "Praise The Lord (Da Shine)",
+            "praise the lord (da shine)",
             StringNormalizer.CreateSongTitleDedupeKey("Praise The Lord (Da Shine) [feat. Skepta]"));
     }
 
     [Fact]
     public void CreateSongTitleDedupeKey_LeavesRemasteredSuffix()
     {
-        Assert.Equal("Song (Remastered)", StringNormalizer.CreateSongTitleDedupeKey("Song (Remastered)"));
+        Assert.Equal("song (remastered)", StringNormalizer.CreateSongTitleDedupeKey("Song (Remastered)"));
     }
 
     [Fact]
@@ -157,7 +157,7 @@ public class StringNormalizerTests
     [Fact]
     public void CreateSongTitleDedupeKey_WithMixedCase_ReturnsDistinctKeys()
     {
-        Assert.NotEqual(
+        Assert.Equal(
             StringNormalizer.CreateSongTitleDedupeKey("Boi"),
             StringNormalizer.CreateSongTitleDedupeKey("boi"));
     }

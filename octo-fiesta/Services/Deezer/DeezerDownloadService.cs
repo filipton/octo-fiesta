@@ -713,9 +713,9 @@ public class DeezerDownloadService : BaseDownloadService
                 
                 // Check if title matches (exact or normalized)
                 if (trackTitle != null && 
-                    (string.Equals(NormalizeTitle(trackTitle), normalizedTitle, StringComparison.Ordinal) ||
-                     string.Equals(trackTitle, title, StringComparison.Ordinal)) &&
-                    string.Equals(artist, trackArtist, StringComparison.Ordinal))
+                    (string.Equals(NormalizeTitle(trackTitle), normalizedTitle, StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(trackTitle, title, StringComparison.OrdinalIgnoreCase)) &&
+                    string.Equals(artist, trackArtist, StringComparison.OrdinalIgnoreCase))
                 {
                     var trackId = track.GetProperty("id").GetInt64().ToString();
                     Logger.LogInformation("Found alternative: {Title} by {Artist} (ID: {Id})", trackTitle, trackArtist, trackId);
@@ -736,8 +736,8 @@ public class DeezerDownloadService : BaseDownloadService
                     : null;
                 
                 if (trackTitle != null && 
-                    trackTitle.Contains(normalizedTitle, StringComparison.Ordinal) &&
-                    string.Equals(artist, trackArtist, StringComparison.Ordinal))
+                    trackTitle.Contains(normalizedTitle, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(artist, trackArtist, StringComparison.OrdinalIgnoreCase))
                 {
                     var trackId = track.GetProperty("id").GetInt64().ToString();
                     Logger.LogInformation("Found alternative (lenient match): {Title} by {Artist} (ID: {Id})", trackTitle, trackArtist, trackId);
