@@ -259,32 +259,27 @@ public class SubsonicController : ControllerBase
         var parameters = await ExtractAllParameters();
         var format = parameters.GetValueOrDefault("f", "xml");
 
+        var emptyLyrics = _responseBuilder.CreateJsonResponse(new
+        {
+            status = "ok",
+            version = "1.16.1",
+            lyricsList = new { }
+        });
+
         try
         {
             var result = await _proxyService.RelayAsync("rest/getLyricsBySongId", parameters);
-            var contentType = result.ContentType ?? $"application/{format}";
-            byte[] pattern = Encoding.UTF8.GetBytes("\"status\":\"ok\"");
-
-            if (result.Body.AsSpan().IndexOf(pattern) >= 0) {
-                return File(result.Body, contentType);
-            } else {
-                return _responseBuilder.CreateJsonResponse(new
-                {
-                    status = "ok",
-                    version = "1.16.1",
-                    lyricsList = new { }
-                });
+            if (IsSubsonicDataNotFound(result.Body, format))
+            {
+                return emptyLyrics;
             }
 
+            var contentType = result.ContentType ?? $"application/{format}";
+            return File(result.Body, contentType);
         }
         catch
         {
-            return _responseBuilder.CreateJsonResponse(new
-            {
-                status = "ok",
-                version = "1.16.1",
-                lyricsList = new { }
-            });
+            return emptyLyrics;
         }
     }
 
@@ -322,6 +317,39 @@ public class SubsonicController : ControllerBase
         }
 
         return _responseBuilder.CreateSongResponse(format, song);
+    }
+
+    /// <summary>
+    /// Reports playback state
+    /// </summary>
+    [HttpGet, HttpPost]
+    [Route("rest/reportPlayback")]
+    [Route("rest/reportPlayback.view")]
+    public async Task<IActionResult> ReportPlaybackState()
+    {
+        var parameters = await ExtractAllParameters();
+        var format = parameters.GetValueOrDefault("f", "xml");
+
+        if (!await TryResolvePlaybackMediaIdAsync(parameters))
+        {
+            return _responseBuilder.CreateResponse(format, "playbackReport", new { });
+        }
+
+        try
+        {
+            var result = await _proxyService.RelayAsync("rest/reportPlayback", parameters);
+            if (IsSubsonicDataNotFound(result.Body, format))
+            {
+                return _responseBuilder.CreateResponse(format, "playbackReport", new { });
+            }
+
+            var contentType = result.ContentType ?? $"application/{format}";
+            return File(result.Body, contentType);
+        }
+        catch (HttpRequestException ex)
+        {
+            return _responseBuilder.CreateError(format, 0, $"Error connecting to Subsonic server: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -1255,9 +1283,12 @@ public class SubsonicController : ControllerBase
         return string.Empty;
     }
 
-    private async Task<(bool IsExternalSong, bool Resolved)> ResolveExternalSongIdIfPossible(Dictionary<string, string> parameters, string endpoint)
+    private async Task<(bool IsExternalSong, bool Resolved)> ResolveExternalSongIdIfPossible(
+        Dictionary<string, string> parameters,
+        string endpoint,
+        string idParameterName = "id")
     {
-        if (!parameters.TryGetValue("id", out var id) || string.IsNullOrWhiteSpace(id))
+        if (!parameters.TryGetValue(idParameterName, out var id) || string.IsNullOrWhiteSpace(id))
         {
             return (false, false);
         }
@@ -1273,12 +1304,89 @@ public class SubsonicController : ControllerBase
         if (!string.IsNullOrEmpty(localId))
         {
             _logger.LogInformation("Resolved {Endpoint} ID {ExternalId} to local ID {LocalId}", endpoint, id, localId);
-            parameters["id"] = localId;
+            parameters[idParameterName] = localId;
             return (true, true);
         }
 
         _logger.LogInformation("Could not resolve external {Endpoint} ID {ExternalId} to a local ID", endpoint, id);
         return (true, false);
+    }
+
+    /// <summary>
+    /// Normalises and resolves the mediaId for reportPlayback.
+    /// Accepts the OpenSubsonic "mediaId" parameter, falling back to legacy "id".
+    /// Returns true when it is safe to relay (non-external or resolved to a local ID),
+    /// false when the ID is external but not yet in the local library.
+    /// </summary>
+    private async Task<bool> TryResolvePlaybackMediaIdAsync(Dictionary<string, string> parameters)
+    {
+        var mediaId = parameters.GetValueOrDefault("mediaId", "");
+        if (string.IsNullOrWhiteSpace(mediaId))
+        {
+            mediaId = parameters.GetValueOrDefault("id", "");
+        }
+
+        if (string.IsNullOrWhiteSpace(mediaId))
+        {
+            return true;
+        }
+
+        // Normalise: always relay as mediaId regardless of which param the client sent.
+        parameters["mediaId"] = mediaId;
+
+        // Only song media IDs need rewriting; podcasts go straight through.
+        if (!string.Equals(parameters.GetValueOrDefault("mediaType", "song"), "song", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(mediaId);
+        if (!isExternal || !string.Equals(type, "song", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrEmpty(provider) || string.IsNullOrEmpty(externalId))
+        {
+            return true;
+        }
+
+        var localId = await _localLibraryService.GetLocalIdForExternalSongAsync(provider, externalId);
+        if (string.IsNullOrEmpty(localId))
+        {
+            return false;
+        }
+
+        parameters["mediaId"] = localId;
+        return true;
+    }
+
+    private static bool IsSubsonicDataNotFound(byte[] body, string format)
+    {
+        if (format == "json")
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("subsonic-response", out var subsonicResponse) &&
+                    subsonicResponse.TryGetProperty("error", out var error) &&
+                    error.TryGetProperty("code", out var code) &&
+                    code.GetInt32() == 70)
+                {
+                    return true;
+                }
+            }
+            catch (JsonException)
+            {
+            }
+        }
+        else
+        {
+            var content = Encoding.UTF8.GetString(body);
+            if (content.Contains("code=\"70\"", StringComparison.Ordinal) &&
+                content.Contains("data not found", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private (bool IsExternalAlbum, string? Provider, string? ExternalId, string RawAlbumId) GetExternalAlbumFromStarParameters(Dictionary<string, string> parameters)
