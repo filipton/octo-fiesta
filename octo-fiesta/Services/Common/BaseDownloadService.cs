@@ -9,6 +9,7 @@ using TagLib;
 using IOFile = System.IO.File;
 using IODirectory = System.IO.Directory;
 using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 
 namespace octo_fiesta.Services.Common;
 
@@ -458,19 +459,30 @@ public abstract class BaseDownloadService : IDownloadService
                     var probeSong = await GetSongMetadataForTrackAsync(externalProvider, externalId);
                     var existingPath = ProbeForExistingFile(
                         PathHelper.BuildTrackPath(DownloadPath, probeSong, ".flac", SubsonicSettings.FolderTemplate, null));
+                    string? existingSubsonicId = null;
                     if (existingPath == null)
                     {
-                        // Fallback: ask Navidrome — catches files with metadata-only matches
+                        // Fallback: ask Navidrome — catches files with metadata-only matches.
+                        // Navidrome reports paths relative to its library root and synthesizes the
+                        // file name from tags (e.g. "01-01 - Title.mp3"), so it can't be trusted
+                        // verbatim. Resolve to a real local file before registering — otherwise the
+                        // mapping's File.Exists check always fails, so it never resolves and gets
+                        // re-probed (and re-logged) on every play, and streaming fails.
                         var naviMatch = await LocalLibraryService.FindLocalSongByMetadataAsync(probeSong);
                         if (naviMatch != null)
                         {
-                            existingPath = naviMatch.LocalPath;
+                            var resolvedPath = ResolveNavidromeMatchFile(naviMatch.LocalPath, probeSong);
+                            if (resolvedPath != null)
+                            {
+                                existingPath = resolvedPath;
+                                existingSubsonicId = naviMatch.LocalSubsonicId;
+                            }
                         }
                     }
                     if (existingPath != null)
                     {
                         Logger.LogInformation("Found existing local file without mapping, registering: {Path}", existingPath);
-                        await LocalLibraryService.RegisterDownloadedSongAsync(probeSong, existingPath, downloadedQuality: null);
+                        await LocalLibraryService.RegisterDownloadedSongAsync(probeSong, existingPath, downloadedQuality: null, localSubsonicId: existingSubsonicId);
                         ourDownloadInfo.Status = DownloadStatus.Completed;
                         ourDownloadInfo.CompletedAt = DateTime.UtcNow;
                         ourDownloadInfo.LocalPath = existingPath;
@@ -1132,6 +1144,110 @@ public abstract class BaseDownloadService : IDownloadService
     #region Utility Methods
 
     private static readonly string[] AudioExtensions = [".flac", ".mp3", ".m4a"];
+
+    // Matches a leading track / disc-track numbering prefix such as "01 - ", "01-01 - ",
+    // "1.01 - " or "01_01 - " so the remaining title can be compared against the song title.
+    private static readonly Regex TrackNumberPrefixRegex = new(
+        @"^\s*\d{1,3}([\-_.]\d{1,3})?\s*[-_.]\s*",
+        RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(250));
+
+    /// <summary>
+    /// Locates the real local file for a Navidrome metadata match. Navidrome returns paths relative
+    /// to its library root (assumed mounted at <see cref="DownloadPath"/>) and synthesizes the file
+    /// name from tags, so the disc/track prefix often differs from the actual file on disk
+    /// (e.g. reported "01-01 - Title.mp3" vs real "01 - Title.mp3"). The directory portion is
+    /// reliable, so when the exact file is missing we scan it for an audio file whose title matches.
+    /// Returns the real path, or null when none exists (caller then downloads a fresh copy).
+    /// </summary>
+    private string? ResolveNavidromeMatchFile(string? navidromePath, Song song)
+    {
+        if (string.IsNullOrWhiteSpace(navidromePath))
+        {
+            return null;
+        }
+
+        var resolved = Path.IsPathRooted(navidromePath)
+            ? navidromePath
+            : Path.Combine(DownloadPath, navidromePath.Replace('/', Path.DirectorySeparatorChar));
+
+        if (IOFile.Exists(resolved))
+        {
+            return resolved;
+        }
+
+        var dir = Path.GetDirectoryName(resolved);
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+        {
+            return null;
+        }
+
+        var titleKey = StringNormalizer.CreateSongTitleDedupeKey(song.Title);
+        if (string.IsNullOrEmpty(titleKey))
+        {
+            return null;
+        }
+
+        // Audio files in this album folder whose title matches (after stripping the track/disc prefix).
+        var matches = Directory.EnumerateFiles(dir)
+            .Where(f => AudioExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+            .Where(f => StringNormalizer.CreateSongTitleDedupeKey(
+                TrackNumberPrefixRegex.Replace(Path.GetFileNameWithoutExtension(f), string.Empty)) == titleKey)
+            .ToList();
+
+        if (matches.Count == 1)
+        {
+            Logger.LogDebug("Navidrome reported '{Reported}' but matched real file '{Actual}' by title",
+                navidromePath, matches[0]);
+            return matches[0];
+        }
+
+        if (matches.Count > 1)
+        {
+            // Multiple tracks in the same album folder share this title (e.g. a reprise or a deluxe
+            // edition duplicate). Disambiguate by the track number Navidrome encoded in the reported
+            // file name; if that doesn't pin a single file, skip reuse and download to avoid serving
+            // the wrong track.
+            var reportedTrack = ExtractTrackNumber(Path.GetFileNameWithoutExtension(resolved));
+            if (reportedTrack != null)
+            {
+                var byTrack = matches
+                    .Where(f => ExtractTrackNumber(Path.GetFileNameWithoutExtension(f)) == reportedTrack)
+                    .ToList();
+                if (byTrack.Count == 1)
+                {
+                    return byTrack[0];
+                }
+            }
+
+            Logger.LogWarning(
+                "Multiple local files in '{Dir}' match title '{Title}'; skipping reuse to avoid a wrong match",
+                dir, song.Title);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Extracts the track number from a leading "NN - " or "DD-NN - " file-name prefix.
+    /// Returns the last number in the prefix (the track within its disc), or null when absent.
+    /// </summary>
+    private static int? ExtractTrackNumber(string stem)
+    {
+        var prefix = TrackNumberPrefixRegex.Match(stem);
+        if (!prefix.Success)
+        {
+            return null;
+        }
+
+        var numbers = Regex.Matches(prefix.Value, @"\d{1,3}");
+        if (numbers.Count == 0)
+        {
+            return null;
+        }
+
+        return int.Parse(numbers[^1].Value);
+    }
 
     private static string? ProbeForExistingFile(string basePath)
     {

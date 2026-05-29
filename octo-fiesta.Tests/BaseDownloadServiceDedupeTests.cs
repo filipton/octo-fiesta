@@ -99,6 +99,15 @@ public class BaseDownloadServiceDedupeTests : IDisposable
     [Fact]
     public async Task DownloadSongAsync_WhenNavidromeReturnsMetadataMatch_RegistersAndSkipsDownload()
     {
+        // Navidrome reports a path relative to its library root (== DownloadPath) whose synthesized
+        // file name ("01-01 - Track") differs from the real file on disk ("01 - Track").
+        var albumDir = Path.Combine(_testDownloadPath, "Artist", "Other Album");
+        Directory.CreateDirectory(albumDir);
+        var realFile = Path.Combine(albumDir, "01 - Track.flac");
+        await File.WriteAllTextAsync(realFile, "existing-file");
+
+        var naviPath = "Artist/Other Album/01-01 - Track.flac"; // does not exist verbatim
+
         var localLibMock = new Mock<ILocalLibraryService>();
         localLibMock
             .Setup(x => x.GetMappingForExternalSongAsync("fake", "2"))
@@ -106,11 +115,51 @@ public class BaseDownloadServiceDedupeTests : IDisposable
         localLibMock
             .Setup(x => x.GetLocalPathForExternalSongAsync("fake", "2"))
             .ReturnsAsync((string?)null);
-
-        var naviPath = "/library/Artist/Album/01. Track.flac";
         localLibMock
             .Setup(x => x.FindLocalSongByMetadataAsync(It.IsAny<Song>()))
             .ReturnsAsync(new LocalSongMatch("local-id-999", naviPath));
+
+        var metaMock = new Mock<IMusicMetadataService>();
+        metaMock
+            .Setup(x => x.GetSongAsync("fake", "2"))
+            .ReturnsAsync(new Song
+            {
+                ExternalId = "2",
+                ExternalProvider = "fake",
+                Title = "Track",
+                Artist = "Artist",
+                Album = "Album",
+                Track = 8
+            });
+
+        var service = BuildService(localLibMock, metaMock);
+
+        var result = await service.DownloadSongAsync("fake", "2");
+
+        // The real file is located by title and registered with an absolute path + Navidrome ID.
+        Assert.Equal(realFile, result);
+        Assert.False(service.DownloadTrackCalled);
+        localLibMock.Verify(
+            x => x.RegisterDownloadedSongAsync(It.IsAny<Song>(), realFile, null, "local-id-999"),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DownloadSongAsync_WhenNavidromeMatchFileMissing_DownloadsInsteadOfRegisteringBrokenPath()
+    {
+        // Navidrome matches by metadata but the reported path does not resolve to any real local
+        // file (different mount, or file deleted). The unverified path must NOT be registered;
+        // the service downloads a fresh copy instead.
+        var localLibMock = new Mock<ILocalLibraryService>();
+        localLibMock
+            .Setup(x => x.GetMappingForExternalSongAsync("fake", "2"))
+            .ReturnsAsync((LocalSongMapping?)null);
+        localLibMock
+            .Setup(x => x.GetLocalPathForExternalSongAsync("fake", "2"))
+            .ReturnsAsync((string?)null);
+        localLibMock
+            .Setup(x => x.FindLocalSongByMetadataAsync(It.IsAny<Song>()))
+            .ReturnsAsync(new LocalSongMatch("local-id-999", "Artist/Missing Album/01-01 - Track.flac"));
 
         var metaMock = new Mock<IMusicMetadataService>();
         metaMock
@@ -129,11 +178,63 @@ public class BaseDownloadServiceDedupeTests : IDisposable
 
         var result = await service.DownloadSongAsync("fake", "2");
 
-        Assert.Equal(naviPath, result);
-        Assert.False(service.DownloadTrackCalled);
+        var expectedDownloadPath = Path.Combine(_testDownloadPath, "Artist", "Album", "01. Track.flac");
+        Assert.Equal(expectedDownloadPath, result);
+        Assert.True(service.DownloadTrackCalled);
         localLibMock.Verify(
-            x => x.RegisterDownloadedSongAsync(It.IsAny<Song>(), naviPath, null, null),
-            Times.Once);
+            x => x.RegisterDownloadedSongAsync(
+                It.IsAny<Song>(),
+                It.Is<string>(p => p.Contains("Missing Album")),
+                It.IsAny<string?>(),
+                It.IsAny<string?>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task DownloadSongAsync_WhenSameAlbumHasDuplicateTitles_DisambiguatesByTrackNumber()
+    {
+        // Two different tracks in the same album folder share the same title (e.g. a reprise).
+        // The reported track number must select the correct file rather than the first match.
+        var albumDir = Path.Combine(_testDownloadPath, "Artist", "Other Album");
+        Directory.CreateDirectory(albumDir);
+        var track3 = Path.Combine(albumDir, "03 - Track.flac");
+        var track9 = Path.Combine(albumDir, "09 - Track.flac");
+        await File.WriteAllTextAsync(track3, "reprise");
+        await File.WriteAllTextAsync(track9, "the-one-we-want");
+
+        // Navidrome reports disc-track "01-09", whose track number (9) should pick track9.
+        var naviPath = "Artist/Other Album/01-09 - Track.flac";
+
+        var localLibMock = new Mock<ILocalLibraryService>();
+        localLibMock
+            .Setup(x => x.GetMappingForExternalSongAsync("fake", "2"))
+            .ReturnsAsync((LocalSongMapping?)null);
+        localLibMock
+            .Setup(x => x.GetLocalPathForExternalSongAsync("fake", "2"))
+            .ReturnsAsync((string?)null);
+        localLibMock
+            .Setup(x => x.FindLocalSongByMetadataAsync(It.IsAny<Song>()))
+            .ReturnsAsync(new LocalSongMatch("local-id-999", naviPath));
+
+        var metaMock = new Mock<IMusicMetadataService>();
+        metaMock
+            .Setup(x => x.GetSongAsync("fake", "2"))
+            .ReturnsAsync(new Song
+            {
+                ExternalId = "2",
+                ExternalProvider = "fake",
+                Title = "Track",
+                Artist = "Artist",
+                Album = "Album",
+                Track = 4
+            });
+
+        var service = BuildService(localLibMock, metaMock);
+
+        var result = await service.DownloadSongAsync("fake", "2");
+
+        Assert.Equal(track9, result);
+        Assert.False(service.DownloadTrackCalled);
     }
 
     [Fact]
