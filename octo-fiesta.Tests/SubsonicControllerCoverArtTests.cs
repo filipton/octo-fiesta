@@ -73,6 +73,7 @@ public class SubsonicControllerCoverArtTests
             coverArtTransformerMock.Object,
             new CoverArtCache(new MemoryCache(new MemoryCacheOptions { SizeLimit = 512 })),
             externalAlbumAvailabilityService,
+            Options.Create(new ExternalCoverSettings()),
             new Mock<ILogger<SubsonicController>>().Object);
 
         var httpContext = new DefaultHttpContext();

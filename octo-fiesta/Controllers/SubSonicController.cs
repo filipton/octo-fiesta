@@ -34,6 +34,7 @@ public class SubsonicController : ControllerBase
     private readonly ICoverArtTransformer _coverArtTransformer;
     private readonly ICoverArtCache _coverArtCache;
     private readonly IExternalAlbumAvailabilityService _externalAlbumAvailabilityService;
+    private readonly ExternalCoverSettings _externalCoverSettings;
 
     /// <summary>
     /// Name of the named HttpClient used for fetching external cover-art images.
@@ -56,10 +57,12 @@ public class SubsonicController : ControllerBase
         ICoverArtTransformer coverArtTransformer,
         ICoverArtCache coverArtCache,
         IExternalAlbumAvailabilityService externalAlbumAvailabilityService,
+        IOptions<ExternalCoverSettings> externalCoverSettings,
         ILogger<SubsonicController> logger,
         PlaylistSyncService? playlistSyncService = null)
     {
         _subsonicSettings = subsonicSettings.Value;
+        _externalCoverSettings = externalCoverSettings.Value;
         _metadataService = metadataService;
         _localLibraryService = localLibraryService;
         _downloadService = downloadService;
@@ -746,7 +749,12 @@ public class SubsonicController : ControllerBase
         var badgeIdentity = await GetExternalCoverBadgeIdentityAsync(parsedExternalId);
         if (badgeIdentity != null)
         {
-            var transformKey = CreateCoverCacheKey("external-frosted-v2", badgeIdentity.Provider, badgeIdentity.Type, badgeIdentity.ExternalId, requestedSize);
+            var transformKey = CreateCoverCacheKey(
+                $"external-cover-v7-{_externalCoverSettings.GetCacheKeySegment()}",
+                badgeIdentity.Provider,
+                badgeIdentity.Type,
+                badgeIdentity.ExternalId,
+                requestedSize);
             var sourcePayload = payload;
             payload = await _coverArtCache.GetOrCreateAsync(
                 transformKey,

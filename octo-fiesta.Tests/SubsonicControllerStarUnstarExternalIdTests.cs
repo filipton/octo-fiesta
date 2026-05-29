@@ -90,9 +90,10 @@ public class SubsonicControllerStarUnstarExternalIdTests
             proxyService,
             appLifetimeMock.Object,
             mockHttpClientFactory.Object,
-            new CoverArtTransformer(),
+            CoverArtTransformerTests.CreateTransformer(),
             new CoverArtCache(new MemoryCache(new MemoryCacheOptions { SizeLimit = 512 })),
             new ExternalAlbumAvailabilityService(),
+            Options.Create(new ExternalCoverSettings()),
             _mockLogger.Object,
             playlistSyncService: null);
 

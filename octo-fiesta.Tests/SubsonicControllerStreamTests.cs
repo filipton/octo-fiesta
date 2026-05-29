@@ -62,9 +62,10 @@ public class SubsonicControllerStreamTests
             proxyService,
             hostApplicationLifetime,
             mockHttpClientFactory.Object,
-            new CoverArtTransformer(),
+            CoverArtTransformerTests.CreateTransformer(),
             new CoverArtCache(new MemoryCache(new MemoryCacheOptions { SizeLimit = 512 })),
             externalAlbumAvailabilityService ?? new ExternalAlbumAvailabilityService(),
+            Options.Create(new ExternalCoverSettings()),
             new Mock<ILogger<SubsonicController>>().Object);
 
         var httpContext = new DefaultHttpContext();

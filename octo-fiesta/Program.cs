@@ -67,6 +67,8 @@ builder.Services.Configure<SquidWTFSettings>(
     builder.Configuration.GetSection("SquidWTF"));
 builder.Services.Configure<YandexSettings>(
     builder.Configuration.GetSection("Yandex"));
+builder.Services.Configure<ExternalCoverSettings>(
+    builder.Configuration.GetSection("ExternalCover"));
 
 // Get the configured music service from bound settings (to respect default values)
 var subsonicSettings = new SubsonicSettings();

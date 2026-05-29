@@ -43,6 +43,11 @@ services:
       - Subsonic__UseNavidromeUploadApi=${USE_NAVIDROME_UPLOAD_API:-false}
       - Subsonic__NavidromeLibraryId=${NAVIDROME_LIBRARY_ID:-1}
       - Subsonic__NavidromeUploadFolder=${NAVIDROME_UPLOAD_FOLDER:-}
+
+      # ===== EXTERNAL COVER INDICATOR =====
+      - ExternalCover__IndicatorSize=${EXTERNAL_COVER_INDICATOR_SIZE:-1}
+      - ExternalCover__IndicatorSaturation=${EXTERNAL_COVER_INDICATOR_SATURATION:-1}
+      - ExternalCover__IndicatorColor=${EXTERNAL_COVER_INDICATOR_COLOR:-0}
       
       # ===== DEEZER SETTINGS =====
       # Deezer ARL token (required if using Deezer)
