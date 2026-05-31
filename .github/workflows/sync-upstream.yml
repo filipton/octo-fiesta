@@ -117,6 +117,7 @@ jobs:
         if: steps.merge.outputs.result == 'conflict'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           PR_BRANCH="${{ steps.conflict.outputs.pr_branch }}"
           TITLE="chore: sync with upstream (conflicts need resolution)"
