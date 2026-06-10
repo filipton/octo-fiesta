@@ -190,8 +190,8 @@ public class SubsonicController : ControllerBase
                 HttpContext.RequestAborted,
                 _hostApplicationLifetime.ApplicationStopping);
 
-            var downloadStream = await _downloadService.DownloadAndStreamAsync(provider!, externalId!, cancellationTokenSource.Token);
-            return File(downloadStream, "audio/mpeg", enableRangeProcessing: true);
+            var (downloadStream, filePath) = await _downloadService.DownloadAndStreamAsync(provider!, externalId!, cancellationTokenSource.Token);
+            return File(downloadStream, GetContentType(filePath), enableRangeProcessing: true);
         }
         catch (Exception ex)
         {
@@ -1148,6 +1148,34 @@ public class SubsonicController : ControllerBase
         var starResolution = await ResolveExternalSongIdIfPossible(parameters, "star");
         if (starResolution is { IsExternalSong: true, Resolved: false })
         {
+            // Song isn't local yet: download it. DownloadSongToPermanentAsync cascades to the
+            // full album in Album download mode.
+            var (_, songProvider, _, songExternalId) = _localLibraryService.ParseExternalId(parameters["id"]);
+            if (!string.IsNullOrEmpty(songProvider) && !string.IsNullOrEmpty(songExternalId))
+            {
+                _logger.LogInformation(
+                    "Starring external song not yet local: {Provider}:{ExternalId}, triggering download",
+                    songProvider, songExternalId);
+
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _downloadService.DownloadSongToPermanentAsync(
+                            songProvider, songExternalId, _hostApplicationLifetime.ApplicationStopping);
+                        _logger.LogInformation("Successfully downloaded starred song {Provider}:{ExternalId}",
+                            songProvider, songExternalId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to download starred song {Provider}:{ExternalId}",
+                            songProvider, songExternalId);
+                    }
+                });
+
+                return _responseBuilder.CreateResponse(format, "starred", new { });
+            }
+
             return _responseBuilder.CreateError(format, 70,
                 "External song could not be starred because it is not available locally yet.");
         }
