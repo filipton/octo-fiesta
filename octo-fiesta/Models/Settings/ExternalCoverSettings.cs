@@ -81,6 +81,7 @@ public sealed class ExternalCoverSettings
                 ExternalCoverIndicatorColorKind.Invert => "1",
                 ExternalCoverIndicatorColorKind.CustomFill =>
                     $"{resolved.FillTint.R:X2}{resolved.FillTint.G:X2}{resolved.FillTint.B:X2}",
+                _ => "0",
             };
         }
 

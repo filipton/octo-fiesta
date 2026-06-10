@@ -99,7 +99,7 @@ public class SubsonicControllerStreamTests
         var downloadServiceMock = new Mock<IDownloadService>();
         downloadServiceMock
             .Setup(x => x.DownloadAndStreamAsync("deezer", "123", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MemoryStream([1, 2, 3]));
+            .ReturnsAsync(((Stream)new MemoryStream([1, 2, 3]), "song.mp3"));
 
         var hostLifetimeMock = new Mock<IHostApplicationLifetime>();
         hostLifetimeMock.SetupGet(x => x.ApplicationStopping).Returns(CancellationToken.None);
