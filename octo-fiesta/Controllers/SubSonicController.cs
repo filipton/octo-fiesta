@@ -11,6 +11,7 @@ using octo_fiesta.Models.Subsonic;
 using octo_fiesta.Services;
 using octo_fiesta.Services.Common;
 using octo_fiesta.Services.Local;
+using octo_fiesta.Services.Lyrics;
 using octo_fiesta.Services.Subsonic;
 
 namespace octo_fiesta.Controllers;
@@ -28,8 +29,10 @@ public class SubsonicController : ControllerBase
     private readonly SubsonicModelMapper _modelMapper;
     private readonly SubsonicProxyService _proxyService;
     private readonly PlaylistSyncService? _playlistSyncService;
+    private readonly ILyricsService? _lyricsService;
     private readonly ILogger<SubsonicController> _logger;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
+<<<<<<< HEAD
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ICoverArtTransformer _coverArtTransformer;
     private readonly ICoverArtCache _coverArtCache;
@@ -42,6 +45,8 @@ public class SubsonicController : ControllerBase
     /// handshakes warm against static.qobuz.com / e-cdns-images.dzcdn.net etc.
     /// </summary>
     public const string CoverArtHttpClient = "cover-art";
+=======
+>>>>>>> upstream/dev
 
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
@@ -59,7 +64,8 @@ public class SubsonicController : ControllerBase
         IExternalAlbumAvailabilityService externalAlbumAvailabilityService,
         IOptions<ExternalCoverSettings> externalCoverSettings,
         ILogger<SubsonicController> logger,
-        PlaylistSyncService? playlistSyncService = null)
+        PlaylistSyncService? playlistSyncService = null,
+        ILyricsService? lyricsService = null)
     {
         _subsonicSettings = subsonicSettings.Value;
         _externalCoverSettings = externalCoverSettings.Value;
@@ -76,6 +82,7 @@ public class SubsonicController : ControllerBase
         _coverArtCache = coverArtCache;
         _externalAlbumAvailabilityService = externalAlbumAvailabilityService;
         _playlistSyncService = playlistSyncService;
+        _lyricsService = lyricsService;
         _logger = logger;
 
         if (string.IsNullOrWhiteSpace(_subsonicSettings.Url))
@@ -323,6 +330,7 @@ public class SubsonicController : ControllerBase
     }
 
     /// <summary>
+<<<<<<< HEAD
     /// Reports playback state
     /// </summary>
     [HttpGet, HttpPost]
@@ -353,6 +361,47 @@ public class SubsonicController : ControllerBase
         {
             return _responseBuilder.CreateError(format, 0, $"Error connecting to Subsonic server: {ex.Message}");
         }
+=======
+    /// OpenSubsonic getLyricsBySongId. Local tracks are answered by the backing Subsonic
+    /// server (which reads embedded and external .lrc lyrics). For an external, not-yet-local
+    /// track we fetch synced lyrics live (LRCLIB) so the client shows them on the first listen,
+    /// before the file has been downloaded and indexed.
+    /// </summary>
+    [HttpGet, HttpPost]
+    [Route("rest/getLyricsBySongId")]
+    [Route("rest/getLyricsBySongId.view")]
+    public async Task<IActionResult> GetLyricsBySongId()
+    {
+        var parameters = await ExtractAllParameters();
+        var id = parameters.GetValueOrDefault("id", "");
+        var format = parameters.GetValueOrDefault("f", "xml");
+
+        var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(id);
+
+        // Local track, or lyrics feature disabled: let the real Subsonic server answer.
+        if (!isExternal || _lyricsService is not { Enabled: true })
+        {
+            try
+            {
+                var result = await _proxyService.RelayAsync("rest/getLyricsBySongId", parameters);
+                var contentType = result.ContentType ?? $"application/{format}";
+                return File(result.Body, contentType);
+            }
+            catch (HttpRequestException ex)
+            {
+                return _responseBuilder.CreateError(format, 0, $"Error connecting to Subsonic server: {ex.Message}");
+            }
+        }
+
+        var song = await _metadataService.GetSongAsync(provider!, externalId!);
+        if (song == null)
+        {
+            return _responseBuilder.CreateLyricsBySongIdResponse(format, null);
+        }
+
+        var lyrics = await _lyricsService.GetLyricsAsync(song, HttpContext.RequestAborted);
+        return _responseBuilder.CreateLyricsBySongIdResponse(format, lyrics);
+>>>>>>> upstream/dev
     }
 
     /// <summary>

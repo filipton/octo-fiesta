@@ -4,6 +4,7 @@ using octo_fiesta.Models.Download;
 using octo_fiesta.Models.Search;
 using octo_fiesta.Models.Subsonic;
 using octo_fiesta.Services.Local;
+using octo_fiesta.Services.Lyrics;
 using octo_fiesta.Services.Subsonic;
 using TagLib;
 using IOFile = System.IO.File;
@@ -61,6 +62,7 @@ public abstract class BaseDownloadService : IDownloadService
     }
 
     /// <summary>
+<<<<<<< HEAD
     /// Lazy-loaded Navidrome upload service. Returns null when not registered.
     /// </summary>
     private INavidromeUploadService? _navidromeUploadService;
@@ -75,6 +77,14 @@ public abstract class BaseDownloadService : IDownloadService
             return _navidromeUploadService;
         }
     }
+=======
+    /// Lazy-loaded lyrics service (optional). Used to drop a .lrc sidecar next to
+    /// permanently downloaded tracks so the backing server serves synced lyrics.
+    /// </summary>
+    private ILyricsService? _lyricsService;
+    protected ILyricsService? LyricsService
+        => _lyricsService ??= _serviceProvider.GetService<ILyricsService>();
+>>>>>>> upstream/dev
 
     /// <summary>
     /// Provider name (e.g., "deezer", "qobuz")
@@ -343,6 +353,15 @@ public abstract class BaseDownloadService : IDownloadService
         // Register in mappings
         song.LocalPath = permanentPath;
         await LocalLibraryService.RegisterDownloadedSongAsync(song, permanentPath, downloadedQuality);
+
+        // Drop a .lrc sidecar next to the now-permanent file (best-effort, fire-and-forget).
+        if (LyricsService is { Enabled: true })
+        {
+            var sidecarService = LyricsService;
+            var sidecarPath = permanentPath;
+            var sidecarSong = song;
+            _ = Task.Run(() => sidecarService.TryWriteSidecarAsync(sidecarPath, sidecarSong, CancellationToken.None));
+        }
 
         // Trigger library scan and migrate playlists in background
         var capturedOldId = oldNavidromeId;
@@ -792,6 +811,17 @@ public abstract class BaseDownloadService : IDownloadService
             // Fragmented MP4 (Tidal HI_RES FLAC-in-MP4) carries no top-level duration; patch it
             // so tag scanners don't report 0:00. Done last so it survives the metadata write.
             PatchMp4DurationIfNeeded(outputPath, result);
+
+            // For permanent files, drop a .lrc sidecar so the backing server serves synced
+            // lyrics on later listens and to other clients. Fire-and-forget: never delay or
+            // fail the download (the audio is already on disk).
+            if (!toCache && LyricsService is { Enabled: true })
+            {
+                var sidecarService = LyricsService;
+                var sidecarPath = outputPath;
+                var sidecarSong = song;
+                _ = Task.Run(() => sidecarService.TryWriteSidecarAsync(sidecarPath, sidecarSong, CancellationToken.None));
+            }
 
             return outputPath;
         }
