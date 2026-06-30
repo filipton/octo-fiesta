@@ -11,6 +11,8 @@ using octo_fiesta.Models.Subsonic;
 using octo_fiesta.Services;
 using octo_fiesta.Services.Common;
 using octo_fiesta.Services.Local;
+using octo_fiesta.Services.Lyrics;
+using octo_fiesta.Services.SquidWTF;
 using octo_fiesta.Services.Subsonic;
 
 namespace octo_fiesta.Controllers;
@@ -28,8 +30,10 @@ public class SubsonicController : ControllerBase
     private readonly SubsonicModelMapper _modelMapper;
     private readonly SubsonicProxyService _proxyService;
     private readonly PlaylistSyncService? _playlistSyncService;
+    private readonly ILyricsService? _lyricsService;
     private readonly ILogger<SubsonicController> _logger;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
+<<<<<<< HEAD
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ICoverArtTransformer _coverArtTransformer;
     private readonly ICoverArtCache _coverArtCache;
@@ -42,6 +46,8 @@ public class SubsonicController : ControllerBase
     /// handshakes warm against static.qobuz.com / e-cdns-images.dzcdn.net etc.
     /// </summary>
     public const string CoverArtHttpClient = "cover-art";
+=======
+>>>>>>> upstream/dev
 
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
@@ -59,7 +65,8 @@ public class SubsonicController : ControllerBase
         IExternalAlbumAvailabilityService externalAlbumAvailabilityService,
         IOptions<ExternalCoverSettings> externalCoverSettings,
         ILogger<SubsonicController> logger,
-        PlaylistSyncService? playlistSyncService = null)
+        PlaylistSyncService? playlistSyncService = null,
+        ILyricsService? lyricsService = null)
     {
         _subsonicSettings = subsonicSettings.Value;
         _externalCoverSettings = externalCoverSettings.Value;
@@ -76,6 +83,7 @@ public class SubsonicController : ControllerBase
         _coverArtCache = coverArtCache;
         _externalAlbumAvailabilityService = externalAlbumAvailabilityService;
         _playlistSyncService = playlistSyncService;
+        _lyricsService = lyricsService;
         _logger = logger;
 
         if (string.IsNullOrWhiteSpace(_subsonicSettings.Url))
@@ -323,6 +331,7 @@ public class SubsonicController : ControllerBase
     }
 
     /// <summary>
+<<<<<<< HEAD
     /// Reports playback state
     /// </summary>
     [HttpGet, HttpPost]
@@ -353,6 +362,47 @@ public class SubsonicController : ControllerBase
         {
             return _responseBuilder.CreateError(format, 0, $"Error connecting to Subsonic server: {ex.Message}");
         }
+=======
+    /// OpenSubsonic getLyricsBySongId. Local tracks are answered by the backing Subsonic
+    /// server (which reads embedded and external .lrc lyrics). For an external, not-yet-local
+    /// track we fetch synced lyrics live (LRCLIB) so the client shows them on the first listen,
+    /// before the file has been downloaded and indexed.
+    /// </summary>
+    [HttpGet, HttpPost]
+    [Route("rest/getLyricsBySongId")]
+    [Route("rest/getLyricsBySongId.view")]
+    public async Task<IActionResult> GetLyricsBySongId()
+    {
+        var parameters = await ExtractAllParameters();
+        var id = parameters.GetValueOrDefault("id", "");
+        var format = parameters.GetValueOrDefault("f", "xml");
+
+        var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(id);
+
+        // Local track, or lyrics feature disabled: let the real Subsonic server answer.
+        if (!isExternal || _lyricsService is not { Enabled: true })
+        {
+            try
+            {
+                var result = await _proxyService.RelayAsync("rest/getLyricsBySongId", parameters);
+                var contentType = result.ContentType ?? $"application/{format}";
+                return File(result.Body, contentType);
+            }
+            catch (HttpRequestException ex)
+            {
+                return _responseBuilder.CreateError(format, 0, $"Error connecting to Subsonic server: {ex.Message}");
+            }
+        }
+
+        var song = await _metadataService.GetSongAsync(provider!, externalId!);
+        if (song == null)
+        {
+            return _responseBuilder.CreateLyricsBySongIdResponse(format, null);
+        }
+
+        var lyrics = await _lyricsService.GetLyricsAsync(song, HttpContext.RequestAborted);
+        return _responseBuilder.CreateLyricsBySongIdResponse(format, lyrics);
+>>>>>>> upstream/dev
     }
 
     /// <summary>
@@ -551,10 +601,35 @@ public class SubsonicController : ControllerBase
             }
         }
 
-        var (isExternal, albumProvider, albumExternalId) = _localLibraryService.ParseSongId(id);
+        var (isExternal, albumProvider, albumType, albumExternalId) = _localLibraryService.ParseExternalId(id);
 
         if (isExternal)
         {
+            // Amazon Music via squidwtf: songs lacking an album ASIN use albumId=songId so clients
+            // can look up cover art. Synthesise a single-track album so the client can queue/play.
+            // Scoped to squidwtf to avoid touching the getAlbum path for other providers.
+            if (albumType == "song" && albumProvider == "squidwtf")
+            {
+                var song = await _metadataService.GetSongAsync(albumProvider!, albumExternalId!);
+                if (song == null)
+                    return _responseBuilder.CreateError(format, 70, "Album not found");
+
+                var syntheticAlbum = new octo_fiesta.Models.Domain.Album
+                {
+                    Id = id,
+                    Title = song.Album ?? song.Title,
+                    Artist = song.Artist,
+                    ArtistId = song.ArtistId,
+                    CoverArtUrl = song.CoverArtUrl,
+                    CoverArtUrlLarge = song.CoverArtUrlLarge,
+                    IsLocal = false,
+                    ExternalProvider = albumProvider,
+                    ExternalId = albumExternalId,
+                    Songs = new System.Collections.Generic.List<octo_fiesta.Models.Domain.Song> { song }
+                };
+                return _responseBuilder.CreateAlbumResponse(format, syntheticAlbum);
+            }
+
             var album = await _metadataService.GetAlbumAsync(albumProvider!, albumExternalId!);
 
             if (album == null)
@@ -711,10 +786,15 @@ public class SubsonicController : ControllerBase
             return NotFound();
         }
 
+<<<<<<< HEAD
         // Local (Subsonic) covers: relay through to upstream Subsonic (Navidrome).
         var isPlaylist = PlaylistIdHelper.IsExternalPlaylist(id);
         (bool isExternal, string? provider, string? type, string? externalId) parsedExternalId = default;
         if (!isPlaylist)
+=======
+        // Check if this is a playlist cover art request
+        if (PlaylistIdHelper.IsExternalPlaylist(id))
+>>>>>>> upstream/dev
         {
             parsedExternalId = _localLibraryService.ParseExternalId(id);
             if (!parsedExternalId.isExternal)
@@ -961,6 +1041,100 @@ public class SubsonicController : ControllerBase
             _logger.LogError(ex, "Error getting cover art for {Id}", id);
             return null;
         }
+<<<<<<< HEAD
+=======
+
+        string? coverUrl = null;
+
+        // Use type to determine which API to call first
+        switch (type)
+        {
+            case "artist":
+                var artist = await _metadataService.GetArtistAsync(coverProvider!, coverExternalId!);
+                if (artist?.ImageUrl != null)
+                {
+                    coverUrl = artist.ImageUrl;
+                }
+                break;
+                
+            case "album":
+                var album = await _metadataService.GetAlbumAsync(coverProvider!, coverExternalId!);
+                if (album?.CoverArtUrl != null)
+                {
+                    coverUrl = album.CoverArtUrlLarge ?? album.CoverArtUrl;
+                }
+                break;
+                
+            case "song":
+            default:
+                // Fast path: check the in-memory cover cache (populated during search/album lookup)
+                // before making an expensive API call just for cover art.
+                if (_metadataService is SquidWTFMetadataService squidService)
+                {
+                    coverUrl = squidService.GetCachedCoverUrl(coverExternalId!);
+                }
+
+                if (coverUrl == null)
+                {
+                    var song = await _metadataService.GetSongAsync(coverProvider!, coverExternalId!);
+                    if (song?.CoverArtUrl != null)
+                    {
+                        coverUrl = song.CoverArtUrlLarge ?? song.CoverArtUrl;
+                    }
+                    else
+                    {
+                        var albumFallback = await _metadataService.GetAlbumAsync(coverProvider!, coverExternalId!);
+                        if (albumFallback?.CoverArtUrl != null)
+                        {
+                            coverUrl = albumFallback.CoverArtUrlLarge ?? albumFallback.CoverArtUrl;
+                        }
+                    }
+                }
+                break;
+        }
+        
+        if (coverUrl != null)
+        {
+            using var httpClient = new HttpClient();
+            using var req = new HttpRequestMessage(HttpMethod.Get, coverUrl);
+
+            // amz.squid.wtf image proxy requires the captcha token
+            if (coverUrl.Contains("amz.squid.wtf", StringComparison.OrdinalIgnoreCase))
+            {
+                var captchaSolver = HttpContext.RequestServices.GetService<SquidWTFCaptchaSolver>();
+                if (captchaSolver != null)
+                {
+                    try
+                    {
+                        var (token, sessionCookie) = await captchaSolver.GetAmazonCaptchaTokenAsync("https://amz.squid.wtf");
+                        req.Headers.Add("X-Captcha-Token", token);
+                        req.Headers.Add("Cookie", sessionCookie);
+                        req.Headers.Add("Origin", "https://amz.squid.wtf");
+                        req.Headers.Add("Referer", "https://amz.squid.wtf/");
+                        req.Headers.Add("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36");
+                        req.Headers.Add("Sec-Fetch-Site", "same-origin");
+                        req.Headers.Add("Sec-Fetch-Mode", "cors");
+                        req.Headers.Add("Sec-Fetch-Dest", "empty");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Could not get Amazon captcha token for cover art");
+                    }
+                }
+            }
+
+            var response = await httpClient.SendAsync(req);
+            if (response.IsSuccessStatusCode)
+            {
+                var imageBytes = await response.Content.ReadAsByteArrayAsync();
+                var contentType = response.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
+                return File(imageBytes, contentType);
+            }
+            _logger.LogWarning("Cover art fetch failed for {Url}: HTTP {Status}", coverUrl, (int)response.StatusCode);
+        }
+
+        return NotFound();
+>>>>>>> upstream/dev
     }
 
     #region Helper Methods
