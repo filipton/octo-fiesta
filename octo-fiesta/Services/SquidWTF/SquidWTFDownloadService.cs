@@ -24,18 +24,22 @@ public class SquidWTFDownloadService : BaseDownloadService
     
     // Static Qobuz API endpoint
     private const string QobuzBaseUrl = "https://qobuz.squid.wtf";
-    
+    private const string AmazonBaseUrl = "https://amz.squid.wtf";
+
     // Required headers
     private const string QobuzCountryHeader = "Token-Country";
     private const string QobuzCountryValue = "US";
     private const string TidalClientHeader = "x-client";
     private const string TidalClientValue = "BiniLossless/v3.4";
-    
+    private const string AmazonCaptchaTokenHeader = "X-Captcha-Token";
+
     // Quality mappings
     // Qobuz: 27 = FLAC 24-bit/192kHz, 7 = FLAC 24-bit/96kHz, 6 = FLAC 16-bit/44kHz, 5 = MP3 320kbps
     // Tidal: HI_RES_LOSSLESS (FLAC 24-bit), LOSSLESS (FLAC 16-bit), HIGH (320kbps AAC), LOW (96kbps AAC)
-    
+    // Amazon: best (FLAC 24-bit), hd (FLAC 16-bit), standard (AAC 256kbps), opus (Opus), atmos (Dolby Atmos)
+
     private bool IsQobuzSource => _squidWTFSettings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase);
+    private bool IsAmazonSource => _squidWTFSettings.Source.Equals("AmazonMusic", StringComparison.OrdinalIgnoreCase);
 
     protected override string ProviderName => "squidwtf";
 
@@ -64,18 +68,23 @@ public class SquidWTFDownloadService : BaseDownloadService
     {
         try
         {
-            // Test connectivity to the appropriate backend
             if (IsQobuzSource)
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, $"{QobuzBaseUrl}/api/get-music?q=test&offset=0");
                 request.Headers.Add(QobuzCountryHeader, QobuzCountryValue);
-                
                 var response = await _httpClient.SendAsync(request);
                 return response.IsSuccessStatusCode;
             }
-            else
+
+            if (IsAmazonSource)
             {
-                // Test Tidal with instance manager
+                // Verify captcha challenge endpoint is reachable
+                var response = await _httpClient.GetAsync($"{AmazonBaseUrl}/api/captcha/challenge");
+                return response.IsSuccessStatusCode;
+            }
+
+            // Tidal — test with instance manager
+            {
                 var response = await _instanceManager.SendWithFailoverAsync(baseUrl =>
                 {
                     var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/search/?s=test");
@@ -105,24 +114,20 @@ public class SquidWTFDownloadService : BaseDownloadService
     protected override string? GetTargetQuality()
     {
         if (!string.IsNullOrEmpty(_squidWTFSettings.Quality))
-        {
             return _squidWTFSettings.Quality;
-        }
-        
-        // Default to highest quality
-        return IsQobuzSource ? "27" : "HI_RES_LOSSLESS";
+
+        if (IsQobuzSource) return "27";
+        if (IsAmazonSource) return "ultrahd";
+        return "HI_RES_LOSSLESS";
     }
 
     protected override async Task<DownloadResult> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken)
     {
         if (IsQobuzSource)
-        {
             return await DownloadTrackQobuzAsync(trackId, song, cancellationToken);
-        }
-        else
-        {
-            return await DownloadTrackTidalAsync(trackId, song, cancellationToken);
-        }
+        if (IsAmazonSource)
+            return await DownloadTrackAmazonAsync(trackId, song, cancellationToken);
+        return await DownloadTrackTidalAsync(trackId, song, cancellationToken);
     }
 
     #endregion
@@ -210,12 +215,164 @@ public class SquidWTFDownloadService : BaseDownloadService
 
     #endregion
 
+    #region Amazon Music Download
+
+    private async Task<DownloadResult> DownloadTrackAmazonAsync(string trackAsin, Song song, CancellationToken cancellationToken)
+    {
+        var tier = GetAmazonTier();
+        var country = _squidWTFSettings.Country;
+
+        const int maxAttempts = 3;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            bool forceRefresh = attempt > 1;
+            var (token, sessionCookie) = await _captchaSolver.GetAmazonCaptchaTokenAsync(AmazonBaseUrl, forceRefresh: forceRefresh, cancellationToken);
+            var trackResponse = await FetchAmazonTrackAsync(trackAsin, tier, country, token, sessionCookie, cancellationToken);
+
+            if (trackResponse == null)
+            {
+                Logger.LogWarning("Amazon Music track request failed (attempt {Attempt}/{Max}), will refresh token", attempt, maxAttempts);
+                continue;
+            }
+
+            if (string.IsNullOrEmpty(trackResponse.Stream?.Url))
+            {
+                Logger.LogWarning("Amazon Music returned no stream URL (attempt {Attempt}/{Max})", attempt, maxAttempts);
+                continue;
+            }
+
+            var cencKey = trackResponse.Drm?.Key;
+            Logger.LogInformation("Got Amazon Music stream URL for track {TrackAsin}: {Title} (codec: {Codec}, tier: {Tier}, attempt: {Attempt}, hasKey: {HasKey})",
+                trackAsin, song.Title, trackResponse.Stream.Codec ?? "?", tier, attempt, cencKey != null);
+
+            var streamUrl = trackResponse.Stream.Url;
+            if (streamUrl.StartsWith("/")) streamUrl = $"{AmazonBaseUrl}{streamUrl}";
+
+            try
+            {
+                var downloadStream = await GetAmazonStreamAsync(streamUrl, token, sessionCookie, cancellationToken);
+                var codec = (trackResponse.Stream.Codec ?? "").ToLowerInvariant();
+                var (extension, quality) = GetAmazonExtensionAndQuality(codec, tier);
+                return new DownloadResult(downloadStream, extension, quality, CencKey: cencKey);
+            }
+            catch (TimeoutException ex)
+            {
+                Logger.LogWarning("Amazon Music stream stalled on attempt {Attempt}/{Max}: {Message} — retrying with fresh URL", attempt, maxAttempts, ex.Message);
+                // Stream URL is single-use; loop will fetch a new one
+            }
+        }
+
+        throw new Exception($"Failed to download Amazon Music track {trackAsin} after {maxAttempts} attempts");
+    }
+
+    private static void AddAmazonBrowserHeaders(HttpRequestMessage req, string sessionCookie, string token)
+    {
+        req.Headers.Add("Cookie", sessionCookie);
+        req.Headers.Add(AmazonCaptchaTokenHeader, token);
+        req.Headers.Add("Origin", AmazonBaseUrl);
+        req.Headers.Add("Referer", AmazonBaseUrl + "/");
+        req.Headers.Add("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36");
+        req.Headers.Add("Accept", "*/*");
+        req.Headers.Add("Accept-Language", "en-US,en;q=0.9");
+        req.Headers.Add("Sec-Fetch-Site", "same-origin");
+        req.Headers.Add("Sec-Fetch-Mode", "cors");
+        req.Headers.Add("Sec-Fetch-Dest", "empty");
+        req.Headers.Add("sec-ch-ua", "\"Chromium\";v=\"137\", \"Not/A)Brand\";v=\"24\", \"Google Chrome\";v=\"137\"");
+        req.Headers.Add("sec-ch-ua-mobile", "?0");
+        req.Headers.Add("sec-ch-ua-platform", "\"Linux\"");
+    }
+
+    private async Task<AmazonMusicTrackResponse?> FetchAmazonTrackAsync(
+        string asin, string tier, string country, string token, string sessionCookie, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var body = System.Text.Json.JsonSerializer.Serialize(new { asin, tier, country });
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{AmazonBaseUrl}/api/track");
+            request.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+            AddAmazonBrowserHeaders(request, sessionCookie, token);
+
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Forbidden ||
+                response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                return null; // Signal to caller to refresh token
+            }
+
+            response.EnsureSuccessStatusCode();
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            Logger.LogDebug("Amazon /api/track response for {Asin}: {Json}", asin, json);
+            return System.Text.Json.JsonSerializer.Deserialize<AmazonMusicTrackResponse>(json);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogWarning(ex, "Amazon Music /api/track request failed for {Asin}", asin);
+            return null;
+        }
+    }
+
+    private async Task<Stream> GetAmazonStreamAsync(string url, string token, string sessionCookie, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        AddAmazonBrowserHeaders(request, sessionCookie, token);
+
+        var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+        if (response.StatusCode == System.Net.HttpStatusCode.Forbidden ||
+            response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            // One more attempt with a fresh token
+            var (freshToken, freshCookie) = await _captchaSolver.GetAmazonCaptchaTokenAsync(AmazonBaseUrl, forceRefresh: true, cancellationToken);
+            using var retryRequest = new HttpRequestMessage(HttpMethod.Get, url);
+            AddAmazonBrowserHeaders(retryRequest, freshCookie, freshToken);
+            response = await _httpClient.SendAsync(retryRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+
+        response.EnsureSuccessStatusCode();
+        return await HttpResponseStream.CreateAsync(response, cancellationToken);
+    }
+
+    private string GetAmazonTier()
+    {
+        var quality = _squidWTFSettings.Quality;
+
+        if (string.IsNullOrEmpty(quality))
+            return "best"; // Default to FLAC 24-bit
+
+        return quality.ToUpperInvariant() switch
+        {
+            "FLAC_24" or "FLAC_24_192" or "ULTRAHD" or "BEST" => "best",
+            "FLAC_16" or "FLAC" or "HD" => "hd",
+            "AAC" or "AAC_256" or "HIGH" or "STANDARD" => "standard",
+            "OPUS" => "opus",
+            "ATMOS" => "atmos",
+            _ => "best"
+        };
+    }
+
+    private static (string Extension, string Quality) GetAmazonExtensionAndQuality(string codec, string tier)
+    {
+        // All Amazon Music streams are CMAF/MP4; after in-place CENC decryption the
+        // container is preserved, so the extension is always .m4a.
+        // TagLib and Navidrome handle FLAC-in-MP4 and Opus-in-MP4 correctly.
+        return codec switch
+        {
+            "flac"  => (".m4a", tier == "hd" ? "FLAC_16" : "FLAC_24"),
+            "opus"  => (".m4a", "OPUS_320"),
+            "atmos" => (".m4a", "ATMOS"),
+            _       => (".m4a", "AAC_256"),
+        };
+    }
+
+    #endregion
+
     #region Tidal Download
 
     private async Task<DownloadResult> DownloadTrackTidalAsync(string trackId, Song song, CancellationToken cancellationToken)
     {
         var requestedQuality = GetTidalQuality();
-        var (manifest, actualQuality) = await GetTidalManifestAsync(trackId, requestedQuality, cancellationToken);
+        var (manifest, actualQuality) = await GetTidalManifestAsync(trackId, requestedQuality, song.Duration, cancellationToken);
 
         if (manifest?.Urls == null || manifest.Urls.Count == 0)
         {
@@ -257,7 +414,7 @@ public class SquidWTFDownloadService : BaseDownloadService
     /// Uses the instance manager for automatic failover.
     /// </summary>
     internal async Task<(TidalManifest? manifest, string quality)> GetTidalManifestAsync(
-        string trackId, string quality, CancellationToken cancellationToken)
+        string trackId, string quality, int? expectedDurationSeconds, CancellationToken cancellationToken)
     {
         var response = await _instanceManager.SendWithFailoverAsync(baseUrl =>
         {
@@ -289,6 +446,19 @@ public class SquidWTFDownloadService : BaseDownloadService
                 Logger.LogInformation(
                     "Parsed DASH manifest for track {TrackId}: {SegmentCount} segments, codecs={Codecs}",
                     trackId, parsed.Urls.Count, parsed.Codecs);
+
+                // Account without HI_RES entitlement gets a ~30s preview, not the full track;
+                // fall back to LOSSLESS which it can stream in full. (see #269)
+                if (quality == "HI_RES_LOSSLESS"
+                    && IsPreviewManifest(parsed.DurationSeconds, expectedDurationSeconds))
+                {
+                    Logger.LogWarning(
+                        "HI_RES_LOSSLESS returned a ~{PreviewDuration:0}s preview for track {TrackId} " +
+                        "(expected ~{Expected}s), falling back to LOSSLESS",
+                        parsed.DurationSeconds, trackId, expectedDurationSeconds);
+                    return await GetTidalManifestAsync(trackId, "LOSSLESS", expectedDurationSeconds, cancellationToken);
+                }
+
                 var manifest = new TidalManifest
                 {
                     MimeType = parsed.MimeType ?? "audio/mp4",
@@ -303,13 +473,23 @@ public class SquidWTFDownloadService : BaseDownloadService
                 Logger.LogWarning(ex,
                     "Failed to parse HI_RES_LOSSLESS DASH manifest for track {TrackId}, falling back to LOSSLESS",
                     trackId);
-                return await GetTidalManifestAsync(trackId, "LOSSLESS", cancellationToken);
+                return await GetTidalManifestAsync(trackId, "LOSSLESS", expectedDurationSeconds, cancellationToken);
             }
         }
 
         var jsonManifest = JsonSerializer.Deserialize<TidalManifest>(manifestText);
         return (jsonManifest, quality);
     }
+
+    // Only flag a preview when a meaningfully longer track is expected, to avoid false
+    // positives on genuinely short tracks.
+    private const int PreviewMinExpectedDurationSeconds = 45;
+    private const double PreviewMaxDurationRatio = 0.5;
+
+    private static bool IsPreviewManifest(double? manifestDurationSeconds, int? expectedDurationSeconds)
+        => manifestDurationSeconds is > 0
+           && expectedDurationSeconds is > PreviewMinExpectedDurationSeconds
+           && manifestDurationSeconds.Value < expectedDurationSeconds.Value * PreviewMaxDurationRatio;
 
     private string GetTidalQuality()
     {
