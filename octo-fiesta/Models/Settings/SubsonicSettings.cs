@@ -175,6 +175,7 @@ public class SubsonicSettings
     public string FolderTemplate { get; set; } = "{artist}/{album}/{track} - {title}";
 
     /// <summary>
+<<<<<<< HEAD
     /// Use the custom Navidrome /api/upload endpoint (requires a forked Navidrome that exposes it).
     /// Environment variable: USE_NAVIDROME_UPLOAD_API
     /// When enabled, downloaded tracks are uploaded directly to Navidrome via HTTP and indexed
@@ -197,4 +198,12 @@ public class SubsonicSettings
     /// Environment variable: NAVIDROME_UPLOAD_FOLDER
     /// </summary>
     public string? NavidromeUploadFolder { get; set; }
+=======
+    /// Disable triggering a Subsonic library scan after a download completes (default: false)
+    /// Environment variable: DISABLE_LIBRARY_SCAN
+    /// Useful when the Subsonic server picks up new files on its own or through an external
+    /// automation, avoiding costly full library scans (e.g. Plex via Plexsonic).
+    /// </summary>
+    public bool DisableLibraryScan { get; set; } = false;
+>>>>>>> upstream/dev
 }
