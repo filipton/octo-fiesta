@@ -186,7 +186,6 @@ public class StringNormalizerTests
         // Assert
         Assert.Equal("creme brulee resume naive", result);
     }
-}
 
     [Fact]
     public void CreateSongTitleDedupeKey_StripsTrailingFeatParens()
