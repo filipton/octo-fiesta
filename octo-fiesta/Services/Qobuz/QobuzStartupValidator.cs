@@ -84,15 +84,9 @@ public class QobuzStartupValidator : BaseStartupValidator
         {
             // Probe endpoint: user/get works without needing user_id (the token identifies
             // the user). This is what QobuzDownloaderX-style clients rely on.
+            // Honour a configured App ID so tokens issued by a non-web-player app validate.
             var apiUrl = $"https://www.qobuz.com/api.json/0.2/user/get?app_id={appId}";
 
-            // Try to validate with a simple API call
-            // We'll use the user favorites endpoint which requires authentication.
-            // Honour a configured App ID so tokens issued by a non-web-player app validate.
-            var appId = _qobuzSettings.Value.AppId;
-            if (string.IsNullOrWhiteSpace(appId)) appId = "798273057"; // Fallback app ID
-            var apiUrl = $"https://www.qobuz.com/api.json/0.2/favorite/getUserFavorites?user_id={userId}&app_id={appId}";
-            
             using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
             request.Headers.Add("X-App-Id", appId);
             request.Headers.Add("X-User-Auth-Token", userAuthToken);
