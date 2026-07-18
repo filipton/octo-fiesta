@@ -84,7 +84,8 @@ public class MultiArtistMatrixTests
     {
         var factory = Factory(JsonHandler(json));
         var bundleLogger = Mock.Of<ILogger<QobuzBundleService>>();
-        var bundle = new Mock<QobuzBundleService>(factory, bundleLogger, Options.Create(new QobuzSettings())) { CallBase = false };
+        var bundle = new Mock<QobuzBundleService>(factory, bundleLogger,
+            Options.Create(new QobuzSettings())) { CallBase = false };
         bundle.Setup(b => b.GetAppIdAsync()).ReturnsAsync("fake-app-id");
         bundle.Setup(b => b.GetSecretsAsync()).ReturnsAsync(new List<string> { "fake-secret" });
         bundle.Setup(b => b.GetSecretAsync(It.IsAny<int>())).ReturnsAsync("fake-secret");
@@ -115,11 +116,13 @@ public class MultiArtistMatrixTests
         });
         var instanceManager = new SquidWTFInstanceManager(
             factory, settings, Mock.Of<ILogger<SquidWTFInstanceManager>>());
+        var captchaSolver = new SquidWTFCaptchaSolver(factory, Mock.Of<ILogger<SquidWTFCaptchaSolver>>());
         return new SquidWTFMetadataService(
             factory,
             settings,
             Options.Create(new SubsonicSettings()),
             instanceManager,
+            captchaSolver,
             Mock.Of<ILogger<SquidWTFMetadataService>>());
     }
 

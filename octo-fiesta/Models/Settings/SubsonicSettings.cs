@@ -197,4 +197,12 @@ public class SubsonicSettings
     /// Environment variable: NAVIDROME_UPLOAD_FOLDER
     /// </summary>
     public string? NavidromeUploadFolder { get; set; }
+
+    /// <summary>
+    /// Disable triggering a Subsonic library scan after a download completes (default: false)
+    /// Environment variable: DISABLE_LIBRARY_SCAN
+    /// Useful when the Subsonic server picks up new files on its own or through an external
+    /// automation, avoiding costly full library scans (e.g. Plex via Plexsonic).
+    /// </summary>
+    public bool DisableLibraryScan { get; set; } = false;
 }

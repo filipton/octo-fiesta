@@ -13,9 +13,8 @@ public class QobuzBundleService
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<QobuzBundleService> _logger;
-    private readonly string? _configuredAppId;
-    private readonly string? _configuredAppSecret;
-    
+    private readonly QobuzSettings _settings;
+
     private const string BaseUrl = "https://play.qobuz.com";
     private const string LoginPageUrl = "https://play.qobuz.com/login";
     
@@ -33,21 +32,14 @@ public class QobuzBundleService
     private List<string>? _cachedSecrets;
     private readonly SemaphoreSlim _initLock = new(1, 1);
 
-    public QobuzBundleService(
-        IHttpClientFactory httpClientFactory,
-        ILogger<QobuzBundleService> logger,
-        IOptions<QobuzSettings>? qobuzSettings = null)
+    public QobuzBundleService(IHttpClientFactory httpClientFactory, ILogger<QobuzBundleService> logger,
+        IOptions<QobuzSettings> qobuzSettings)
     {
         _httpClient = httpClientFactory.CreateClient();
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", 
+        _httpClient.DefaultRequestHeaders.Add("User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
         _logger = logger;
-
-        // Optional explicit credentials from configuration (env vars: Qobuz__AppId, Qobuz__AppSecret).
-        // When both are provided, bundle scraping is bypassed entirely.
-        var settings = qobuzSettings?.Value;
-        _configuredAppId = string.IsNullOrWhiteSpace(settings?.AppId) ? null : settings!.AppId!.Trim();
-        _configuredAppSecret = string.IsNullOrWhiteSpace(settings?.AppSecret) ? null : settings!.AppSecret!.Trim();
+        _settings = qobuzSettings.Value;
     }
 
     /// <summary>
@@ -101,26 +93,16 @@ public class QobuzBundleService
                 return;
             }
 
-            // Fast path: explicit credentials supplied via configuration / env vars.
-            // No need to scrape play.qobuz.com.
-            if (_configuredAppId != null && _configuredAppSecret != null)
+            // If an App ID and secret are explicitly configured, use them directly and
+            // skip scraping the web bundle. This is needed for user_auth_tokens that were
+            // issued by an app other than the web player (a token is only valid with the
+            // app_id that created it).
+            if (!string.IsNullOrWhiteSpace(_settings.AppId) && !string.IsNullOrWhiteSpace(_settings.AppSecret))
             {
-                _logger.LogInformation(
-                    "Using Qobuz App ID and App Secret from configuration (Qobuz__AppId / Qobuz__AppSecret); skipping bundle extraction.");
-                _cachedAppId = _configuredAppId;
-                _cachedSecrets = new List<string> { _configuredAppSecret };
+                _cachedAppId = _settings.AppId;
+                _cachedSecrets = new List<string> { _settings.AppSecret };
+                _logger.LogInformation("Using configured Qobuz App ID {AppId} (bundle extraction skipped)", _cachedAppId);
                 return;
-            }
-
-            if (_configuredAppId != null && _configuredAppSecret == null)
-            {
-                _logger.LogWarning(
-                    "Qobuz__AppId is configured but Qobuz__AppSecret is missing; falling back to bundle extraction.");
-            }
-            else if (_configuredAppId == null && _configuredAppSecret != null)
-            {
-                _logger.LogWarning(
-                    "Qobuz__AppSecret is configured but Qobuz__AppId is missing; falling back to bundle extraction.");
             }
 
             _logger.LogInformation("Extracting Qobuz App ID and secrets from web bundle...");
