@@ -102,9 +102,15 @@ public class StringNormalizerTests
     [Fact]
     public void CreateComparisonKey_WithMixedCase_ReturnsCaseInsensitiveKey()
     {
-        var key1 = StringNormalizer.CreateComparisonKey("It'S A Song");
-        var key2 = StringNormalizer.CreateComparisonKey("it's a song");
+        // Arrange
+        var input1 = "It'S A Song";
+        var input2 = "it's a song";
 
+        // Act
+        var key1 = StringNormalizer.CreateComparisonKey(input1);
+        var key2 = StringNormalizer.CreateComparisonKey(input2);
+
+        // Assert
         Assert.Equal(key1, key2);
     }
 

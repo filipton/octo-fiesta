@@ -85,7 +85,7 @@ public class DeezerDownloadServiceTests : IDisposable
 
         var serviceProviderMock = new Mock<IServiceProvider>();
         serviceProviderMock.Setup(sp => sp.GetService(typeof(octo_fiesta.Services.Subsonic.PlaylistSyncService)))
-            .Returns((object?)null);
+            .Returns(null);
 
         return new DeezerDownloadService(
             _httpClientFactoryMock.Object,

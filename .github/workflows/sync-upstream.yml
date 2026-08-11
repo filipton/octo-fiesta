@@ -54,6 +54,30 @@ jobs:
             echo "needs_sync=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Close stale sync PRs (already in sync)
+        if: steps.check.outputs.needs_sync == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # We're already in sync with upstream, so any open "sync with upstream"
+          # conflict PR whose upstream SHA is already merged into this branch is stale
+          # (its changes landed some other way, e.g. a manual merge). Close those so
+          # they don't pile up in the queue.
+          gh pr list --state open --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("sync/upstream-")) | "\(.number)\t\(.headRefName)"' \
+          | while IFS=$'\t' read -r NUM HEADREF; do
+              SHA="${HEADREF##*-}"
+              if git merge-base --is-ancestor "${SHA}" HEAD 2>/dev/null; then
+                echo "Closing stale sync PR #${NUM} (upstream ${SHA} already merged into ${BRANCH})."
+                gh pr comment "${NUM}" --body "Auto-closed: these upstream changes are already merged into \`${BRANCH}\`."
+                gh pr close "${NUM}"
+              else
+                echo "Keeping PR #${NUM} (upstream ${SHA} not yet merged)."
+              fi
+            done
+
       - name: Attempt fast-forward / clean merge
         if: steps.check.outputs.needs_sync == 'true'
         id: merge
