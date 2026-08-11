@@ -29,7 +29,7 @@ builder.Services.AddHttpClient();
 // We use a SocketsHttpHandler with a long-lived connection pool so TLS handshakes are
 // reused across requests. Default IHttpClientFactory rotates handlers every 2 minutes
 // which causes a fresh TLS handshake far too often for image traffic.
-builder.Services.AddHttpClient(SubsonicController.CoverArtHttpClient, client =>
+builder.Services.AddHttpClient(ExternalCoverArtService.HttpClientName, client =>
     {
         client.Timeout = TimeSpan.FromSeconds(15);
         client.DefaultRequestVersion = HttpVersion.Version20;
@@ -90,6 +90,7 @@ builder.Services.AddSingleton<SubsonicModelMapper>();
 builder.Services.AddSingleton<ICoverArtTransformer, CoverArtTransformer>();
 builder.Services.AddSingleton<ICoverArtCache, CoverArtCache>();
 builder.Services.AddSingleton<IExternalAlbumAvailabilityService, ExternalAlbumAvailabilityService>();
+builder.Services.AddSingleton<IExternalCoverArtService, ExternalCoverArtService>();
 builder.Services.AddSingleton<INavidromeUploadService, NavidromeUploadService>();
 builder.Services.AddScoped<SubsonicProxyService>();
 

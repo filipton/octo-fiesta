@@ -101,11 +101,7 @@ public class SubsonicControllerStarTests
             _modelMapper,
             proxyService,
             appLifetimeMock.Object,
-            mockHttpClientFactory.Object,
-            CoverArtTransformerTests.CreateTransformer(),
-            new CoverArtCache(new MemoryCache(new MemoryCacheOptions { SizeLimit = 512 })),
-            new ExternalAlbumAvailabilityService(),
-            Options.Create(new ExternalCoverSettings()),
+            new Mock<IExternalCoverArtService>().Object,
             _mockLogger.Object,
             playlistSyncService);
         

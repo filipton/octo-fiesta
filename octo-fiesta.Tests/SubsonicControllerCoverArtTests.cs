@@ -59,6 +59,17 @@ public class SubsonicControllerCoverArtTests
         var appLifetimeMock = new Mock<IHostApplicationLifetime>();
         appLifetimeMock.SetupGet(x => x.ApplicationStopping).Returns(CancellationToken.None);
 
+        var controllerLogger = new Mock<ILogger<SubsonicController>>();
+        var externalCoverArtService = new ExternalCoverArtService(
+            mockHttpClientFactory.Object,
+            coverArtTransformerMock.Object,
+            new CoverArtCache(new MemoryCache(new MemoryCacheOptions { SizeLimit = 512 })),
+            externalAlbumAvailabilityService,
+            Options.Create(new ExternalCoverSettings()),
+            metadataServiceMock.Object,
+            localLibraryServiceMock.Object,
+            new Mock<ILogger<ExternalCoverArtService>>().Object);
+
         var controller = new SubsonicController(
             settings,
             metadataServiceMock.Object,
@@ -69,12 +80,8 @@ public class SubsonicControllerCoverArtTests
             new SubsonicModelMapper(responseBuilder, new Mock<ILogger<SubsonicModelMapper>>().Object),
             proxyService,
             appLifetimeMock.Object,
-            mockHttpClientFactory.Object,
-            coverArtTransformerMock.Object,
-            new CoverArtCache(new MemoryCache(new MemoryCacheOptions { SizeLimit = 512 })),
-            externalAlbumAvailabilityService,
-            Options.Create(new ExternalCoverSettings()),
-            new Mock<ILogger<SubsonicController>>().Object);
+            externalCoverArtService,
+            controllerLogger.Object);
 
         var httpContext = new DefaultHttpContext();
         httpContext.Request.QueryString = new QueryString($"?id={coverArtId}&size=150");

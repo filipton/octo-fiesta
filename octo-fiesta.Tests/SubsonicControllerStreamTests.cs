@@ -51,6 +51,16 @@ public class SubsonicControllerStreamTests
             settings,
             httpContextAccessor);
 
+        var externalCoverArtService = new ExternalCoverArtService(
+            mockHttpClientFactory.Object,
+            CoverArtTransformerTests.CreateTransformer(),
+            new CoverArtCache(new MemoryCache(new MemoryCacheOptions { SizeLimit = 512 })),
+            externalAlbumAvailabilityService ?? new ExternalAlbumAvailabilityService(),
+            Options.Create(new ExternalCoverSettings()),
+            metadataServiceMock.Object,
+            localLibraryServiceMock.Object,
+            new Mock<ILogger<ExternalCoverArtService>>().Object);
+
         var controller = new SubsonicController(
             settings,
             metadataServiceMock.Object,
@@ -61,11 +71,7 @@ public class SubsonicControllerStreamTests
             modelMapper,
             proxyService,
             hostApplicationLifetime,
-            mockHttpClientFactory.Object,
-            CoverArtTransformerTests.CreateTransformer(),
-            new CoverArtCache(new MemoryCache(new MemoryCacheOptions { SizeLimit = 512 })),
-            externalAlbumAvailabilityService ?? new ExternalAlbumAvailabilityService(),
-            Options.Create(new ExternalCoverSettings()),
+            externalCoverArtService,
             new Mock<ILogger<SubsonicController>>().Object);
 
         var httpContext = new DefaultHttpContext();

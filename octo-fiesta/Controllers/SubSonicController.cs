@@ -33,18 +33,7 @@ public class SubsonicController : ControllerBase
     private readonly ILyricsService? _lyricsService;
     private readonly ILogger<SubsonicController> _logger;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly ICoverArtTransformer _coverArtTransformer;
-    private readonly ICoverArtCache _coverArtCache;
-    private readonly IExternalAlbumAvailabilityService _externalAlbumAvailabilityService;
-    private readonly ExternalCoverSettings _externalCoverSettings;
-
-    /// <summary>
-    /// Name of the named HttpClient used for fetching external cover-art images.
-    /// Configured in Program.cs with an aggressive connection pool to keep TLS
-    /// handshakes warm against static.qobuz.com / e-cdns-images.dzcdn.net etc.
-    /// </summary>
-    public const string CoverArtHttpClient = "cover-art";
+    private readonly IExternalCoverArtService _externalCoverArtService;
 
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
@@ -56,17 +45,12 @@ public class SubsonicController : ControllerBase
         SubsonicModelMapper modelMapper,
         SubsonicProxyService proxyService,
         IHostApplicationLifetime hostApplicationLifetime,
-        IHttpClientFactory httpClientFactory,
-        ICoverArtTransformer coverArtTransformer,
-        ICoverArtCache coverArtCache,
-        IExternalAlbumAvailabilityService externalAlbumAvailabilityService,
-        IOptions<ExternalCoverSettings> externalCoverSettings,
+        IExternalCoverArtService externalCoverArtService,
         ILogger<SubsonicController> logger,
         PlaylistSyncService? playlistSyncService = null,
         ILyricsService? lyricsService = null)
     {
         _subsonicSettings = subsonicSettings.Value;
-        _externalCoverSettings = externalCoverSettings.Value;
         _metadataService = metadataService;
         _localLibraryService = localLibraryService;
         _downloadService = downloadService;
@@ -75,10 +59,7 @@ public class SubsonicController : ControllerBase
         _modelMapper = modelMapper;
         _proxyService = proxyService;
         _hostApplicationLifetime = hostApplicationLifetime;
-        _httpClientFactory = httpClientFactory;
-        _coverArtTransformer = coverArtTransformer;
-        _coverArtCache = coverArtCache;
-        _externalAlbumAvailabilityService = externalAlbumAvailabilityService;
+        _externalCoverArtService = externalCoverArtService;
         _playlistSyncService = playlistSyncService;
         _lyricsService = lyricsService;
         _logger = logger;
@@ -200,7 +181,7 @@ public class SubsonicController : ControllerBase
         // Otherwise download from the provider and stream (quality upgrade logic applies)
         try
         {
-            await MarkAlbumDownloadStartedAsync(provider!, externalId!);
+            await _externalCoverArtService.MarkAlbumDownloadStartedAsync(provider!, externalId!);
 
             // Allow cancellation from both client disconnect and application shutdown
             using var cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
@@ -484,6 +465,9 @@ public class SubsonicController : ControllerBase
             if (StringNormalizer.CreateArtistComparisonKey(externalArtist.Name) == StringNormalizer.CreateArtistComparisonKey(artistName))
             {
                 externalAlbums = await _metadataService.GetArtistAlbumsAsync(externalArtist.ExternalProvider!, externalArtist.ExternalId!);
+                
+                // Fill artist info for each album (external API may not include it in artist/albums endpoint)
+                // Use local artist ID and name so albums link back to the local artist
 
                 foreach (var album in externalAlbums)
                 {
@@ -705,22 +689,21 @@ public class SubsonicController : ControllerBase
             {
                 if (song is Dictionary<string, object> dict && dict.TryGetValue("title", out var titleObj))
                 {
-                    var t = titleObj?.ToString() ?? "";
-                    localSongTitles.Add(StringNormalizer.CreateComparisonKey(t));
-                    localSongTitles.Add(StringNormalizer.CreateSongTitleDedupeKey(t));
+                    var normalizedTitle = StringNormalizer.CreateComparisonKey(titleObj?.ToString() ?? "");
+                    localSongTitles.Add(normalizedTitle);
+                    localSongTitles.Add(StringNormalizer.CreateSongTitleDedupeKey(titleObj?.ToString()));
                 }
             }
 
             var mergedSongs = localSongs.ToList();
             foreach (var externalSong in externalAlbum.Songs)
             {
-                var ext = externalSong.Title ?? "";
-                if (localSongTitles.Contains(StringNormalizer.CreateComparisonKey(ext))
-                    || localSongTitles.Contains(StringNormalizer.CreateSongTitleDedupeKey(ext)))
+                var normalizedExternalTitle = StringNormalizer.CreateComparisonKey(externalSong.Title);
+                if (!localSongTitles.Contains(normalizedExternalTitle)
+                    && !localSongTitles.Contains(StringNormalizer.CreateSongTitleDedupeKey(externalSong.Title)))
                 {
-                    continue;
+                    mergedSongs.Add(_responseBuilder.ConvertSongToJson(externalSong));
                 }
-                mergedSongs.Add(_responseBuilder.ConvertSongToJson(externalSong));
             }
 
             mergedSongs = mergedSongs
@@ -803,264 +786,18 @@ public class SubsonicController : ControllerBase
             requestedSize = s;
         }
 
-        var payload = await ResolveAndFetchCoverArtAsync(id, isPlaylist, requestedSize);
+        var payload = await _externalCoverArtService.ResolveAsync(
+            id,
+            parsedExternalId,
+            requestedSize,
+            HttpContext.RequestServices,
+            HttpContext.RequestAborted);
         if (payload == null)
         {
             return NotFound();
         }
 
-        var badgeIdentity = await GetExternalCoverBadgeIdentityAsync(parsedExternalId);
-        if (badgeIdentity != null)
-        {
-            var transformKey = CreateCoverCacheKey(
-                $"external-cover-v7-{_externalCoverSettings.GetCacheKeySegment()}",
-                badgeIdentity.Provider,
-                badgeIdentity.Type,
-                badgeIdentity.ExternalId,
-                requestedSize);
-            var sourcePayload = payload;
-            payload = await _coverArtCache.GetOrCreateAsync(
-                transformKey,
-                async cancellationToken =>
-                {
-                    var transformed = await _coverArtTransformer.ApplyExternalTreatmentAsync(sourcePayload.Bytes, sourcePayload.ContentType, cancellationToken);
-                    return new CoverArtPayload(transformed.Bytes, transformed.ContentType);
-                },
-                HttpContext.RequestAborted);
-        }
-
         return File(payload.Bytes, payload.ContentType);
-    }
-
-    private async Task<ExternalCoverBadgeIdentity?> GetExternalCoverBadgeIdentityAsync((bool isExternal, string? provider, string? type, string? externalId) parsedExternalId)
-    {
-        if (!parsedExternalId.isExternal ||
-            string.IsNullOrWhiteSpace(parsedExternalId.provider) ||
-            string.IsNullOrWhiteSpace(parsedExternalId.externalId))
-        {
-            return null;
-        }
-
-        if (string.Equals(parsedExternalId.type, "album", StringComparison.OrdinalIgnoreCase))
-        {
-            return _externalAlbumAvailabilityService.IsDownloadStarted(parsedExternalId.provider, parsedExternalId.externalId)
-                ? null
-                : new ExternalCoverBadgeIdentity(parsedExternalId.provider, "album", parsedExternalId.externalId);
-        }
-
-        if (string.Equals(parsedExternalId.type, "song", StringComparison.OrdinalIgnoreCase))
-        {
-            var albumIdentity = await GetExternalSongAlbumIdentityAsync(parsedExternalId.provider, parsedExternalId.externalId);
-            if (albumIdentity != null &&
-                _externalAlbumAvailabilityService.IsDownloadStarted(albumIdentity.Provider, albumIdentity.ExternalId))
-            {
-                return null;
-            }
-
-            return new ExternalCoverBadgeIdentity(parsedExternalId.provider, "song", parsedExternalId.externalId);
-        }
-
-        return null;
-    }
-
-    private async Task<ExternalCoverBadgeIdentity?> GetExternalSongAlbumIdentityAsync(string provider, string externalId)
-    {
-        try
-        {
-            var song = await _metadataService.GetSongAsync(provider, externalId);
-            if (string.IsNullOrWhiteSpace(song?.AlbumId) || PlaylistIdHelper.IsExternalPlaylist(song.AlbumId))
-            {
-                return null;
-            }
-
-            var (isExternalAlbum, albumProvider, type, albumExternalId) = _localLibraryService.ParseExternalId(song.AlbumId);
-            if (isExternalAlbum &&
-                string.Equals(type, "album", StringComparison.OrdinalIgnoreCase) &&
-                !string.IsNullOrWhiteSpace(albumProvider) &&
-                !string.IsNullOrWhiteSpace(albumExternalId))
-            {
-                return new ExternalCoverBadgeIdentity(albumProvider, "album", albumExternalId);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not resolve album identity for cover badge on {Provider}:{ExternalId}", provider, externalId);
-        }
-
-        return null;
-    }
-
-    private sealed record ExternalCoverBadgeIdentity(string Provider, string Type, string ExternalId);
-
-    private static string CreateCoverCacheKey(string prefix, string provider, string type, string externalId, int? requestedSize)
-    {
-        return $"{prefix}:{provider}:{type}:{externalId}:{requestedSize?.ToString() ?? "original"}";
-    }
-
-    private async Task MarkAlbumDownloadStartedAsync(string provider, string externalId)
-    {
-        try
-        {
-            var song = await _metadataService.GetSongAsync(provider, externalId);
-            if (string.IsNullOrWhiteSpace(song?.AlbumId) || PlaylistIdHelper.IsExternalPlaylist(song.AlbumId))
-            {
-                return;
-            }
-
-            var (isExternalAlbum, albumProvider, type, albumExternalId) = _localLibraryService.ParseExternalId(song.AlbumId);
-            if (isExternalAlbum &&
-                string.Equals(type, "album", StringComparison.OrdinalIgnoreCase) &&
-                !string.IsNullOrWhiteSpace(albumProvider) &&
-                !string.IsNullOrWhiteSpace(albumExternalId))
-            {
-                _externalAlbumAvailabilityService.MarkDownloadStarted(albumProvider, albumExternalId);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not mark album download started for {Provider}:{ExternalId}", provider, externalId);
-        }
-    }
-
-    /// <summary>
-    /// Rewrites a Qobuz cover URL to the closest available CDN size variant.
-    /// Qobuz CDN serves the same image at fixed sizes: 50, 150, 300, 600, max.
-    /// URL pattern: <c>https://static.qobuz.com/images/covers/xx/yy/{id}_{SIZE}.jpg</c>.
-    /// Returns the URL unchanged for non-Qobuz CDN hosts.
-    /// </summary>
-    private static string RewriteQobuzCoverSize(string url, int requestedSize)
-    {
-        if (!url.Contains("static.qobuz.com/images/", StringComparison.OrdinalIgnoreCase))
-        {
-            return url;
-        }
-
-        // Pick the smallest CDN variant that satisfies the requested size.
-        var target = requestedSize switch
-        {
-            <= 50 => "50",
-            <= 150 => "150",
-            <= 300 => "300",
-            <= 600 => "600",
-            _ => "max",
-        };
-
-        // Replace the `_{size}.jpg` suffix. Qobuz only ever uses .jpg here.
-        var lastUnderscore = url.LastIndexOf('_');
-        var lastDot = url.LastIndexOf('.');
-        if (lastUnderscore < 0 || lastDot < 0 || lastDot <= lastUnderscore)
-        {
-            return url;
-        }
-        return string.Concat(url.AsSpan(0, lastUnderscore + 1), target, url.AsSpan(lastDot));
-    }
-
-    private async Task<CoverArtPayload?> ResolveAndFetchCoverArtAsync(string id, bool isPlaylist, int? requestedSize = null)
-    {
-        try
-        {
-            string? coverUrl = null;
-
-            if (isPlaylist)
-            {
-                var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
-                var playlist = await _metadataService.GetPlaylistAsync(provider, externalId);
-                coverUrl = playlist?.CoverUrl;
-            }
-            else
-            {
-                var (_, coverProvider, type, coverExternalId) = _localLibraryService.ParseExternalId(id);
-                switch (type)
-                {
-                    case "artist":
-                        var artist = await _metadataService.GetArtistAsync(coverProvider!, coverExternalId!);
-                        coverUrl = artist?.ImageUrl;
-                        break;
-                    case "album":
-                        // Lightweight cover-only lookup; avoids pulling the full track list.
-                        coverUrl = await _metadataService.GetAlbumCoverUrlAsync(coverProvider!, coverExternalId!);
-                        break;
-                    case "song":
-                    default:
-                        // Fast path: check the in-memory cover cache (populated during search/album lookup)
-                        // before making an expensive API call just for cover art.
-                        if (_metadataService is SquidWTFMetadataService squidService)
-                        {
-                            coverUrl = squidService.GetCachedCoverUrl(coverExternalId!);
-                        }
-
-                        if (coverUrl == null)
-                        {
-                            var song = await _metadataService.GetSongAsync(coverProvider!, coverExternalId!);
-                            coverUrl = song?.CoverArtUrlLarge ?? song?.CoverArtUrl;
-                            if (coverUrl == null)
-                            {
-                                coverUrl = await _metadataService.GetAlbumCoverUrlAsync(coverProvider!, coverExternalId!);
-                            }
-                        }
-                        break;
-                }
-            }
-
-            if (string.IsNullOrEmpty(coverUrl))
-            {
-                return null;
-            }
-
-            // Downsize when the client asked for a thumbnail; Qobuz CDN URLs are size-rewritable.
-            if (requestedSize.HasValue)
-            {
-                coverUrl = RewriteQobuzCoverSize(coverUrl, requestedSize.Value);
-            }
-
-            var sourceKey = $"cover-source:{coverUrl}";
-            return await _coverArtCache.GetOrCreateAsync(
-                sourceKey,
-                async cancellationToken =>
-                {
-                    // Use the dedicated pooled cover-art client (long-lived TLS connections).
-                    var httpClient = _httpClientFactory.CreateClient(CoverArtHttpClient);
-                    using var req = new HttpRequestMessage(HttpMethod.Get, coverUrl);
-
-                    // amz.squid.wtf image proxy requires the captcha token
-                    if (coverUrl.Contains("amz.squid.wtf", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var captchaSolver = HttpContext.RequestServices.GetService<SquidWTFCaptchaSolver>();
-                        if (captchaSolver != null)
-                        {
-                            try
-                            {
-                                var (token, sessionCookie) = await captchaSolver.GetAmazonCaptchaTokenAsync("https://amz.squid.wtf");
-                                req.Headers.Add("X-Captcha-Token", token);
-                                req.Headers.Add("Cookie", sessionCookie);
-                                req.Headers.Add("Origin", "https://amz.squid.wtf");
-                                req.Headers.Add("Referer", "https://amz.squid.wtf/");
-                                req.Headers.Add("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36");
-                                req.Headers.Add("Sec-Fetch-Site", "same-origin");
-                                req.Headers.Add("Sec-Fetch-Mode", "cors");
-                                req.Headers.Add("Sec-Fetch-Dest", "empty");
-                            }
-                            catch (Exception captchaEx)
-                            {
-                                _logger.LogWarning(captchaEx, "Could not get Amazon captcha token for cover art");
-                            }
-                        }
-                    }
-
-                    var response = await httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                    response.EnsureSuccessStatusCode();
-
-                    var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-                    var contentType = response.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
-                    return new CoverArtPayload(bytes, contentType);
-                },
-                HttpContext.RequestAborted);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting cover art for {Id}", id);
-            return null;
-        }
     }
 
     #region Helper Methods
@@ -1419,12 +1156,9 @@ public class SubsonicController : ControllerBase
         return string.Empty;
     }
 
-    private async Task<(bool IsExternalSong, bool Resolved)> ResolveExternalSongIdIfPossible(
-        Dictionary<string, string> parameters,
-        string endpoint,
-        string idParameterName = "id")
+    private async Task<(bool IsExternalSong, bool Resolved)> ResolveExternalSongIdIfPossible(Dictionary<string, string> parameters, string endpoint)
     {
-        if (!parameters.TryGetValue(idParameterName, out var id) || string.IsNullOrWhiteSpace(id))
+        if (!parameters.TryGetValue("id", out var id) || string.IsNullOrWhiteSpace(id))
         {
             return (false, false);
         }
@@ -1440,7 +1174,7 @@ public class SubsonicController : ControllerBase
         if (!string.IsNullOrEmpty(localId))
         {
             _logger.LogInformation("Resolved {Endpoint} ID {ExternalId} to local ID {LocalId}", endpoint, id, localId);
-            parameters[idParameterName] = localId;
+            parameters["id"] = localId;
             return (true, true);
         }
 

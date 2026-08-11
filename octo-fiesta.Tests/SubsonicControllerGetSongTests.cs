@@ -70,11 +70,7 @@ public class SubsonicControllerGetSongTests
             modelMapper,
             proxyService,
             new Mock<IHostApplicationLifetime>().Object,
-            mockHttpClientFactory.Object,
-            CoverArtTransformerTests.CreateTransformer(),
-            new CoverArtCache(new MemoryCache(new MemoryCacheOptions { SizeLimit = 512 })),
-            new ExternalAlbumAvailabilityService(),
-            Options.Create(new ExternalCoverSettings()),
+            new Mock<IExternalCoverArtService>().Object,
             new Mock<ILogger<SubsonicController>>().Object);
 
         var httpContext = new DefaultHttpContext();
