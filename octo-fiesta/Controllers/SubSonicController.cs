@@ -804,7 +804,6 @@ public class SubsonicController : ControllerBase
             id,
             parsedExternalId,
             requestedSize,
-            HttpContext.RequestServices,
             HttpContext.RequestAborted);
         if (payload == null)
         {

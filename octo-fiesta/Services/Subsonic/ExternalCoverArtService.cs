@@ -2,7 +2,6 @@ using Microsoft.Extensions.Options;
 using octo_fiesta.Models.Settings;
 using octo_fiesta.Services.Common;
 using octo_fiesta.Services.Local;
-using octo_fiesta.Services.SquidWTF;
 
 namespace octo_fiesta.Services.Subsonic;
 
@@ -12,7 +11,6 @@ public interface IExternalCoverArtService
         string id,
         (bool isExternal, string? provider, string? type, string? externalId) parsedExternalId,
         int? requestedSize,
-        IServiceProvider requestServices,
         CancellationToken cancellationToken);
 
     Task MarkAlbumDownloadStartedAsync(string provider, string externalId);
@@ -55,10 +53,9 @@ public sealed class ExternalCoverArtService : IExternalCoverArtService
         string id,
         (bool isExternal, string? provider, string? type, string? externalId) parsedExternalId,
         int? requestedSize,
-        IServiceProvider requestServices,
         CancellationToken cancellationToken)
     {
-        var payload = await ResolveAndFetchCoverArtAsync(id, requestedSize, requestServices, cancellationToken);
+        var payload = await ResolveAndFetchCoverArtAsync(id, requestedSize, cancellationToken);
         if (payload == null)
         {
             return null;
@@ -174,7 +171,6 @@ public sealed class ExternalCoverArtService : IExternalCoverArtService
     private async Task<CoverArtPayload?> ResolveAndFetchCoverArtAsync(
         string id,
         int? requestedSize,
-        IServiceProvider requestServices,
         CancellationToken cancellationToken)
     {
         try
@@ -201,19 +197,11 @@ public sealed class ExternalCoverArtService : IExternalCoverArtService
                         break;
                     case "song":
                     default:
-                        if (_metadataService is SquidWTFMetadataService squidService)
-                        {
-                            coverUrl = squidService.GetCachedCoverUrl(coverExternalId!);
-                        }
-
+                        var song = await _metadataService.GetSongAsync(coverProvider!, coverExternalId!);
+                        coverUrl = song?.CoverArtUrlLarge ?? song?.CoverArtUrl;
                         if (coverUrl == null)
                         {
-                            var song = await _metadataService.GetSongAsync(coverProvider!, coverExternalId!);
-                            coverUrl = song?.CoverArtUrlLarge ?? song?.CoverArtUrl;
-                            if (coverUrl == null)
-                            {
-                                coverUrl = await _metadataService.GetAlbumCoverUrlAsync(coverProvider!, coverExternalId!);
-                            }
+                            coverUrl = await _metadataService.GetAlbumCoverUrlAsync(coverProvider!, coverExternalId!);
                         }
                         break;
                 }
@@ -236,30 +224,6 @@ public sealed class ExternalCoverArtService : IExternalCoverArtService
                 {
                     var httpClient = _httpClientFactory.CreateClient(HttpClientName);
                     using var req = new HttpRequestMessage(HttpMethod.Get, coverUrl);
-
-                    if (coverUrl.Contains("amz.squid.wtf", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var captchaSolver = requestServices.GetService<SquidWTFCaptchaSolver>();
-                        if (captchaSolver != null)
-                        {
-                            try
-                            {
-                                var (tokenValue, sessionCookie) = await captchaSolver.GetAmazonCaptchaTokenAsync("https://amz.squid.wtf");
-                                req.Headers.Add("X-Captcha-Token", tokenValue);
-                                req.Headers.Add("Cookie", sessionCookie);
-                                req.Headers.Add("Origin", "https://amz.squid.wtf");
-                                req.Headers.Add("Referer", "https://amz.squid.wtf/");
-                                req.Headers.Add("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36");
-                                req.Headers.Add("Sec-Fetch-Site", "same-origin");
-                                req.Headers.Add("Sec-Fetch-Mode", "cors");
-                                req.Headers.Add("Sec-Fetch-Dest", "empty");
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogWarning(ex, "Could not get Amazon captcha token for cover art");
-                            }
-                        }
-                    }
 
                     var response = await httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token);
                     response.EnsureSuccessStatusCode();

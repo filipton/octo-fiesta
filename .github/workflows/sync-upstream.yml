@@ -99,7 +99,7 @@ jobs:
             exit 0
           fi
 
-          echo "Merge failed due to conflicts."
+          echo "Merge failed due to conflicts; opening a conflict PR."
           git merge --abort 2>/dev/null || true
           echo "result=conflict" >> "$GITHUB_OUTPUT"
 
