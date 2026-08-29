@@ -1,5 +1,3 @@
-using System.Net;
-using octo_fiesta.Controllers;
 using octo_fiesta.Models.Settings;
 using octo_fiesta.Services;
 using octo_fiesta.Services.Deezer;
@@ -18,37 +16,8 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 
 builder.Services.AddControllers();
-builder.Services.AddMemoryCache(options =>
-{
-    // Cover-art entries are byte arrays; cap cache growth while keeping hot search results fast.
-    options.SizeLimit = 512;
-});
+builder.Services.AddForkFeatures(builder.Configuration);
 builder.Services.AddHttpClient();
-
-// Dedicated HttpClient for fetching external cover-art images (Qobuz/Deezer/Tidal CDNs).
-// We use a SocketsHttpHandler with a long-lived connection pool so TLS handshakes are
-// reused across requests. Default IHttpClientFactory rotates handlers every 2 minutes
-// which causes a fresh TLS handshake far too often for image traffic.
-builder.Services.AddHttpClient(ExternalCoverArtService.HttpClientName, client =>
-    {
-        client.Timeout = TimeSpan.FromSeconds(15);
-        client.DefaultRequestVersion = HttpVersion.Version20;
-        client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
-    })
-    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-    {
-        // Keep idle connections alive for 5 minutes so subsequent cover requests
-        // don't pay the TLS handshake cost.
-        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
-        // Recycle connections occasionally to honour DNS changes.
-        PooledConnectionLifetime = TimeSpan.FromMinutes(15),
-        MaxConnectionsPerServer = 32,
-        EnableMultipleHttp2Connections = true,
-        AutomaticDecompression = DecompressionMethods.All,
-        ConnectTimeout = TimeSpan.FromSeconds(5),
-    })
-    // Disable handler rotation; the SocketsHttpHandler manages its own pool lifetime.
-    .SetHandlerLifetime(Timeout.InfiniteTimeSpan);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
@@ -68,8 +37,6 @@ builder.Services.Configure<SquidWTFSettings>(
     builder.Configuration.GetSection("SquidWTF"));
 builder.Services.Configure<YandexSettings>(
     builder.Configuration.GetSection("Yandex"));
-builder.Services.Configure<ExternalCoverSettings>(
-    builder.Configuration.GetSection("ExternalCover"));
 builder.Services.Configure<LyricsSettings>(
     builder.Configuration.GetSection("Lyrics"));
 
@@ -87,11 +54,6 @@ builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
 builder.Services.AddSingleton<SubsonicRequestParser>();
 builder.Services.AddSingleton<SubsonicResponseBuilder>();
 builder.Services.AddSingleton<SubsonicModelMapper>();
-builder.Services.AddSingleton<ICoverArtTransformer, CoverArtTransformer>();
-builder.Services.AddSingleton<ICoverArtCache, CoverArtCache>();
-builder.Services.AddSingleton<IExternalAlbumAvailabilityService, ExternalAlbumAvailabilityService>();
-builder.Services.AddSingleton<IExternalCoverArtService, ExternalCoverArtService>();
-builder.Services.AddSingleton<INavidromeUploadService, NavidromeUploadService>();
 builder.Services.AddScoped<SubsonicProxyService>();
 
 // Lyrics lookup (LRCLIB). Always registered; gated at runtime by Lyrics:Enabled.

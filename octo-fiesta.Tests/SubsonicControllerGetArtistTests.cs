@@ -68,7 +68,6 @@ public class SubsonicControllerGetArtistTests
             modelMapper,
             proxyService,
             new Mock<IHostApplicationLifetime>().Object,
-            new Mock<IExternalCoverArtService>().Object,
             new Mock<ILogger<SubsonicController>>().Object);
 
         var httpContext = new DefaultHttpContext();

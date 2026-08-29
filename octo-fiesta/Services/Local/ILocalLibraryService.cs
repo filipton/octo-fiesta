@@ -9,7 +9,7 @@ namespace octo_fiesta.Services.Local;
 /// <summary>
 /// Interface for local music library management
 /// </summary>
-public interface ILocalLibraryService
+public partial interface ILocalLibraryService
 {
     /// <summary>
     /// Checks if an external song already exists locally
@@ -27,7 +27,7 @@ public interface ILocalLibraryService
     /// <summary>
     /// Registers a downloaded song in the local library
     /// </summary>
-    Task RegisterDownloadedSongAsync(Song song, string localPath, string? downloadedQuality = null, string? localSubsonicId = null);
+    Task RegisterDownloadedSongAsync(Song song, string localPath, string? downloadedQuality = null);
     
     /// <summary>
     /// Gets the full mapping for an external song (includes quality info)
@@ -35,23 +35,9 @@ public interface ILocalLibraryService
     Task<LocalSongMapping?> GetMappingForExternalSongAsync(string externalProvider, string externalId);
 
     /// <summary>
-    /// Returns a read-only snapshot of all known external-to-local mappings keyed by
-    /// <c>"{provider}:{externalId}"</c>. Intended for bulk lookups (e.g. search dedupe)
-    /// where calling per-id helpers would be wasteful.
-    /// </summary>
-    Task<IReadOnlyDictionary<string, LocalSongMapping>> GetMappingsSnapshotAsync(CancellationToken cancellationToken = default);
-    
-    /// <summary>
     /// Gets the mapping between external ID and local ID
     /// </summary>
     Task<string?> GetLocalIdForExternalSongAsync(string externalProvider, string externalId);
-
-    /// <summary>
-    /// Searches Navidrome for a song that matches the given metadata (title + artist or title + album).
-    /// Returns the matched local Subsonic ID and an approximate local path when found, null otherwise.
-    /// Used as a fallback pre-download check for songs imported by external tools.
-    /// </summary>
-    Task<LocalSongMatch?> FindLocalSongByMetadataAsync(Song song);
 
     /// <summary>
     /// Triggers or waits for library indexing, then resolves the local ID.

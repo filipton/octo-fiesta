@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -80,11 +81,13 @@ public class SubsonicControllerCoverArtTests
             new SubsonicModelMapper(responseBuilder, new Mock<ILogger<SubsonicModelMapper>>().Object),
             proxyService,
             appLifetimeMock.Object,
-            externalCoverArtService,
             controllerLogger.Object);
 
         var httpContext = new DefaultHttpContext();
         httpContext.Request.QueryString = new QueryString($"?id={coverArtId}&size=150");
+        httpContext.RequestServices = new ServiceCollection()
+            .AddSingleton<IExternalCoverArtService>(externalCoverArtService)
+            .BuildServiceProvider();
 
         controller.ControllerContext = new ControllerContext
         {

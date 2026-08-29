@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Moq;
 using Moq.Protected;
@@ -89,7 +88,6 @@ public class SubsonicControllerStarUnstarExternalIdTests
             _modelMapper,
             proxyService,
             appLifetimeMock.Object,
-            new Mock<IExternalCoverArtService>().Object,
             _mockLogger.Object,
             playlistSyncService: null);
 

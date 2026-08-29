@@ -2,11 +2,9 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Moq;
 using octo_fiesta.Controllers;
-using octo_fiesta.Models.Domain;
 using octo_fiesta.Models.Settings;
 using octo_fiesta.Services;
 using octo_fiesta.Services.Local;
@@ -20,11 +18,9 @@ public class SubsonicControllerStreamTests
         Mock<ILocalLibraryService> localLibraryServiceMock,
         Mock<IDownloadService> downloadServiceMock,
         IHostApplicationLifetime hostApplicationLifetime,
-        CancellationToken requestAbortedToken,
-        Mock<IMusicMetadataService>? metadataServiceMock = null,
-        IExternalAlbumAvailabilityService? externalAlbumAvailabilityService = null)
+        CancellationToken requestAbortedToken)
     {
-        metadataServiceMock ??= new Mock<IMusicMetadataService>();
+        var metadataServiceMock = new Mock<IMusicMetadataService>();
         var requestParser = new SubsonicRequestParser();
         var responseBuilder = new SubsonicResponseBuilder();
         var modelMapper = new SubsonicModelMapper(
@@ -51,16 +47,6 @@ public class SubsonicControllerStreamTests
             settings,
             httpContextAccessor);
 
-        var externalCoverArtService = new ExternalCoverArtService(
-            mockHttpClientFactory.Object,
-            CoverArtTransformerTests.CreateTransformer(),
-            new CoverArtCache(new MemoryCache(new MemoryCacheOptions { SizeLimit = 512 })),
-            externalAlbumAvailabilityService ?? new ExternalAlbumAvailabilityService(),
-            Options.Create(new ExternalCoverSettings()),
-            metadataServiceMock.Object,
-            localLibraryServiceMock.Object,
-            new Mock<ILogger<ExternalCoverArtService>>().Object);
-
         var controller = new SubsonicController(
             settings,
             metadataServiceMock.Object,
@@ -71,7 +57,6 @@ public class SubsonicControllerStreamTests
             modelMapper,
             proxyService,
             hostApplicationLifetime,
-            externalCoverArtService,
             new Mock<ILogger<SubsonicController>>().Object);
 
         var httpContext = new DefaultHttpContext();
@@ -84,44 +69,6 @@ public class SubsonicControllerStreamTests
         };
 
         return controller;
-    }
-
-    [Fact]
-    public async Task Stream_WithExternalSong_MarksAlbumDownloadStarted()
-    {
-        var localLibraryServiceMock = new Mock<ILocalLibraryService>();
-        localLibraryServiceMock
-            .Setup(x => x.ParseSongId(It.IsAny<string>()))
-            .Returns((true, "deezer", "123"));
-        localLibraryServiceMock
-            .Setup(x => x.ParseExternalId("ext-deezer-album-456"))
-            .Returns((true, "deezer", "album", "456"));
-
-        var metadataServiceMock = new Mock<IMusicMetadataService>();
-        metadataServiceMock
-            .Setup(x => x.GetSongAsync("deezer", "123"))
-            .ReturnsAsync(new Song { AlbumId = "ext-deezer-album-456" });
-
-        var downloadServiceMock = new Mock<IDownloadService>();
-        downloadServiceMock
-            .Setup(x => x.DownloadAndStreamAsync("deezer", "123", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(((Stream)new MemoryStream([1, 2, 3]), "song.mp3"));
-
-        var hostLifetimeMock = new Mock<IHostApplicationLifetime>();
-        hostLifetimeMock.SetupGet(x => x.ApplicationStopping).Returns(CancellationToken.None);
-
-        var availabilityService = new ExternalAlbumAvailabilityService();
-        var controller = CreateController(
-            localLibraryServiceMock,
-            downloadServiceMock,
-            hostLifetimeMock.Object,
-            CancellationToken.None,
-            metadataServiceMock,
-            availabilityService);
-
-        await controller.Stream();
-
-        Assert.True(availabilityService.IsDownloadStarted("deezer", "456"));
     }
 
     [Fact]

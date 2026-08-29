@@ -6,10 +6,6 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     branches: [master, dev]
-  workflow_run:
-    workflows: ["Sync with upstream"]
-    types: [completed]
-    branches: [master, dev]
 
 env:
   DOTNET_VERSION: "9.0.x"
@@ -17,13 +13,10 @@ env:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4

@@ -1,7 +1,6 @@
 using System.Net;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -70,7 +69,6 @@ public class SubsonicControllerGetSongTests
             modelMapper,
             proxyService,
             new Mock<IHostApplicationLifetime>().Object,
-            new Mock<IExternalCoverArtService>().Object,
             new Mock<ILogger<SubsonicController>>().Object);
 
         var httpContext = new DefaultHttpContext();

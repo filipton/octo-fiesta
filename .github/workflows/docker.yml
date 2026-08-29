@@ -5,10 +5,6 @@ on:
   push:
     tags: ['v*']
     branches: [master, dev]
-  workflow_run:
-    workflows: ["Sync with upstream"]
-    types: [completed]
-    branches: [master, dev]
 
 env:
   DOTNET_VERSION: "9.0.x"
@@ -18,13 +14,10 @@ env:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -53,7 +46,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -77,17 +69,16 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
             type=sha,prefix=
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' || github.event.workflow_run.head_branch == 'master' }}
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' || github.event.workflow_run.head_branch == 'dev' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
 
       - name: Extract version from tag
         id: version
         run: |
-          REF="${{ github.event_name == 'workflow_run' && format('refs/heads/{0}', github.event.workflow_run.head_branch) || github.ref }}"
-          if [[ "$REF" == refs/tags/v* ]]; then
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             # Tag release: v0.4.0 -> 0.4.0
-            VERSION=${REF#refs/tags/v}
-          elif [[ "$REF" == refs/heads/dev ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          elif [[ "${{ github.ref }}" == refs/heads/dev ]]; then
             # Dev branch: get version from git describe with commit info
             git fetch --tags
             DESCRIBE=$(git describe --tags 2>/dev/null || echo "v0.0.0")
@@ -103,7 +94,7 @@ jobs:
               # Exactly on tag: v0.4.0
               VERSION="${DESCRIBE#v}-dev"
             fi
-          elif [[ "$REF" == refs/heads/master ]]; then
+          elif [[ "${{ github.ref }}" == refs/heads/master ]]; then
             # Master branch: get latest tag
             git fetch --tags
             LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")

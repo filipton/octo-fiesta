@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace octo_fiesta.Services.Common;
 
@@ -8,7 +7,7 @@ namespace octo_fiesta.Services.Common;
 /// Helper class for normalizing strings for comparison purposes.
 /// Handles different quote characters (straight vs curly quotes) and other variants.
 /// </summary>
-public static class StringNormalizer
+public static partial class StringNormalizer
 {
     // Mapping of various quote and apostrophe characters to their canonical forms
     private static readonly Dictionary<char, char> CharNormalizations = new()
@@ -34,11 +33,6 @@ public static class StringNormalizer
         { '−', '-' }, // U+2212 minus sign
         { '－', '-' }  // U+FF0D fullwidth hyphen-minus
     };
-
-    private static readonly Regex TrailingFeatSuffixRegex = new(
-        @"\s+[\(\[](feat\.|ft\.)[^\)\]]*[\)\]]\s*$",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
-        TimeSpan.FromMilliseconds(250));
 
     /// <summary>
     /// Normalizes a string for comparison by standardizing quote characters.
@@ -101,29 +95,5 @@ public static class StringNormalizer
         }
 
         return sb.ToString().Normalize(NormalizationForm.FormC);
-    }
-
-    public static string CreateArtistComparisonKey(string? input)
-    {
-        if (string.IsNullOrEmpty(input))
-        {
-            return "";
-        }
-
-        return NormalizeForComparison(input);
-    }
-
-    public static string CreateSongTitleDedupeKey(string? title)
-    {
-        var s = CreateComparisonKey(title);
-        while (true)
-        {
-            var next = TrailingFeatSuffixRegex.Replace(s, "").TrimEnd();
-            if (next.Length == s.Length && next == s)
-            {
-                return s;
-            }
-            s = next;
-        }
     }
 }

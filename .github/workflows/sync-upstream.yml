@@ -153,7 +153,7 @@ jobs:
           The commit on this branch is a real merge commit (two parents) whose tree still contains conflict markers. To resolve:
 
           1. Check out this branch locally: \`git fetch origin ${PR_BRANCH} && git checkout ${PR_BRANCH}\`
-          2. Resolve conflicts in the files listed by \`git status\` / search for \`<<<<<<<\`.
+          2. Resolve conflicts by running \`git grep -n '<<<<<<<'\` and editing each listed file.
           3. \`git add\` the resolved files and amend: \`git commit --amend --no-edit\`
           4. \`git push --force-with-lease\`
           5. Merge this PR.

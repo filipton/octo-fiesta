@@ -84,7 +84,7 @@ public enum MusicService
     Yandex
 }
 
-public class SubsonicSettings
+public partial class SubsonicSettings
 {
     public string? Url { get; set; }
 
@@ -174,30 +174,6 @@ public class SubsonicSettings
     /// Slashes (/) separate folder levels; the last segment becomes the file name.
     /// </summary>
     public string FolderTemplate { get; set; } = "{artist}/{album}/{track} - {title}";
-
-    /// <summary>
-    /// Use the custom Navidrome /api/upload endpoint (requires a forked Navidrome that exposes it).
-    /// Environment variable: USE_NAVIDROME_UPLOAD_API
-    /// When enabled, downloaded tracks are uploaded directly to Navidrome via HTTP and indexed
-    /// immediately (no library re-scan needed). Requires SUBSONIC_ADMIN_USERNAME/PASSWORD to be set
-    /// (used to obtain a JWT via Navidrome's /auth/login endpoint).
-    /// Default: false (legacy save-to-folder + scan flow is used).
-    /// </summary>
-    public bool UseNavidromeUploadApi { get; set; } = false;
-
-    /// <summary>
-    /// Navidrome library ID to upload tracks into when UseNavidromeUploadApi is true (default: 1).
-    /// Environment variable: NAVIDROME_LIBRARY_ID
-    /// </summary>
-    public int NavidromeLibraryId { get; set; } = 1;
-
-    /// <summary>
-    /// Optional folder prefix (relative to the Navidrome library root) used as the destination
-    /// for uploaded tracks. The full destination folder per song is computed as
-    /// {NavidromeUploadFolder}/{artist}/{album} (or just {artist}/{album} when this is empty).
-    /// Environment variable: NAVIDROME_UPLOAD_FOLDER
-    /// </summary>
-    public string? NavidromeUploadFolder { get; set; }
 
     /// <summary>
     /// Disable triggering a Subsonic library scan after a download completes (default: false)

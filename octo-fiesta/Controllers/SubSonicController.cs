@@ -19,7 +19,7 @@ namespace octo_fiesta.Controllers;
 
 [ApiController]
 [Route("")]
-public class SubsonicController : ControllerBase
+public partial class SubsonicController : ControllerBase
 {
     private readonly SubsonicSettings _subsonicSettings;
     private readonly IMusicMetadataService _metadataService;
@@ -33,7 +33,6 @@ public class SubsonicController : ControllerBase
     private readonly ILyricsService? _lyricsService;
     private readonly ILogger<SubsonicController> _logger;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
-    private readonly IExternalCoverArtService _externalCoverArtService;
 
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
@@ -45,7 +44,6 @@ public class SubsonicController : ControllerBase
         SubsonicModelMapper modelMapper,
         SubsonicProxyService proxyService,
         IHostApplicationLifetime hostApplicationLifetime,
-        IExternalCoverArtService externalCoverArtService,
         ILogger<SubsonicController> logger,
         PlaylistSyncService? playlistSyncService = null,
         ILyricsService? lyricsService = null)
@@ -59,7 +57,6 @@ public class SubsonicController : ControllerBase
         _modelMapper = modelMapper;
         _proxyService = proxyService;
         _hostApplicationLifetime = hostApplicationLifetime;
-        _externalCoverArtService = externalCoverArtService;
         _playlistSyncService = playlistSyncService;
         _lyricsService = lyricsService;
         _logger = logger;
@@ -181,7 +178,11 @@ public class SubsonicController : ControllerBase
         // Otherwise download from the provider and stream (quality upgrade logic applies)
         try
         {
-            await _externalCoverArtService.MarkAlbumDownloadStartedAsync(provider!, externalId!);
+            var externalCoverArtService = GetExternalCoverArtService();
+            if (externalCoverArtService != null)
+            {
+                await externalCoverArtService.MarkAlbumDownloadStartedAsync(provider!, externalId!);
+            }
 
             // Allow cancellation from both client disconnect and application shutdown
             using var cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
@@ -291,39 +292,6 @@ public class SubsonicController : ControllerBase
         }
 
         return _responseBuilder.CreateSongResponse(format, song);
-    }
-
-    /// <summary>
-    /// Reports playback state
-    /// </summary>
-    [HttpGet, HttpPost]
-    [Route("rest/reportPlayback")]
-    [Route("rest/reportPlayback.view")]
-    public async Task<IActionResult> ReportPlaybackState()
-    {
-        var parameters = await ExtractAllParameters();
-        var format = parameters.GetValueOrDefault("f", "xml");
-
-        if (!await TryResolvePlaybackMediaIdAsync(parameters))
-        {
-            return _responseBuilder.CreateResponse(format, "playbackReport", new { });
-        }
-
-        try
-        {
-            var result = await _proxyService.RelayAsync("rest/reportPlayback", parameters);
-            if (IsSubsonicDataNotFound(result.Body, format))
-            {
-                return _responseBuilder.CreateResponse(format, "playbackReport", new { });
-            }
-
-            var contentType = result.ContentType ?? $"application/{format}";
-            return File(result.Body, contentType);
-        }
-        catch (HttpRequestException ex)
-        {
-            return _responseBuilder.CreateError(format, 0, $"Error connecting to Subsonic server: {ex.Message}");
-        }
     }
 
     /// <summary>
@@ -800,7 +768,13 @@ public class SubsonicController : ControllerBase
             requestedSize = s;
         }
 
-        var payload = await _externalCoverArtService.ResolveAsync(
+        var externalCoverArtService = GetExternalCoverArtService();
+        if (externalCoverArtService == null)
+        {
+            return NotFound();
+        }
+
+        var payload = await externalCoverArtService.ResolveAsync(
             id,
             parsedExternalId,
             requestedSize,
@@ -1193,83 +1167,6 @@ public class SubsonicController : ControllerBase
 
         _logger.LogInformation("Could not resolve external {Endpoint} ID {ExternalId} to a local ID", endpoint, id);
         return (true, false);
-    }
-
-    /// <summary>
-    /// Normalises and resolves the mediaId for reportPlayback.
-    /// Accepts the OpenSubsonic "mediaId" parameter, falling back to legacy "id".
-    /// Returns true when it is safe to relay (non-external or resolved to a local ID),
-    /// false when the ID is external but not yet in the local library.
-    /// </summary>
-    private async Task<bool> TryResolvePlaybackMediaIdAsync(Dictionary<string, string> parameters)
-    {
-        var mediaId = parameters.GetValueOrDefault("mediaId", "");
-        if (string.IsNullOrWhiteSpace(mediaId))
-        {
-            mediaId = parameters.GetValueOrDefault("id", "");
-        }
-
-        if (string.IsNullOrWhiteSpace(mediaId))
-        {
-            return true;
-        }
-
-        // Normalise: always relay as mediaId regardless of which param the client sent.
-        parameters["mediaId"] = mediaId;
-
-        // Only song media IDs need rewriting; podcasts go straight through.
-        if (!string.Equals(parameters.GetValueOrDefault("mediaType", "song"), "song", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(mediaId);
-        if (!isExternal || !string.Equals(type, "song", StringComparison.OrdinalIgnoreCase)
-            || string.IsNullOrEmpty(provider) || string.IsNullOrEmpty(externalId))
-        {
-            return true;
-        }
-
-        var localId = await _localLibraryService.GetLocalIdForExternalSongAsync(provider, externalId);
-        if (string.IsNullOrEmpty(localId))
-        {
-            return false;
-        }
-
-        parameters["mediaId"] = localId;
-        return true;
-    }
-
-    private static bool IsSubsonicDataNotFound(byte[] body, string format)
-    {
-        if (format == "json")
-        {
-            try
-            {
-                using var doc = JsonDocument.Parse(body);
-                if (doc.RootElement.TryGetProperty("subsonic-response", out var subsonicResponse) &&
-                    subsonicResponse.TryGetProperty("error", out var error) &&
-                    error.TryGetProperty("code", out var code) &&
-                    code.GetInt32() == 70)
-                {
-                    return true;
-                }
-            }
-            catch (JsonException)
-            {
-            }
-        }
-        else
-        {
-            var content = Encoding.UTF8.GetString(body);
-            if (content.Contains("code=\"70\"", StringComparison.Ordinal) &&
-                content.Contains("data not found", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private (bool IsExternalAlbum, string? Provider, string? ExternalId, string RawAlbumId) GetExternalAlbumFromStarParameters(Dictionary<string, string> parameters)
