@@ -27,7 +27,9 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ env.BRANCH }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # GITHUB_TOKEN cannot push commits that modify .github/workflows.
+          # Configure SYNC_TOKEN with contents, pull requests, and workflows write access.
+          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Configure git
         run: |
@@ -57,7 +59,7 @@ jobs:
       - name: Close stale sync PRs (already in sync)
         if: steps.check.outputs.needs_sync == 'false'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -140,7 +142,7 @@ jobs:
       - name: Open / update conflict PR
         if: steps.merge.outputs.result == 'conflict'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           PR_BRANCH="${{ steps.conflict.outputs.pr_branch }}"

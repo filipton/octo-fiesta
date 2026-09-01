@@ -31,16 +31,19 @@ This fork extends the upstream project with the following features and integrati
 
 The fork also includes automated upstream synchronisation/build workflows, expanded regression coverage, and a `scripts/library_rename_to_qobuz.py` migration helper for existing libraries.
 
+The upstream sync workflow requires a repository secret named `SYNC_TOKEN`. The token needs write access to contents, pull requests, and workflows because sync commits may update files under `.github/workflows/`.
+
 ## Supported Music Providers
 
 | Provider | Credentials Required | Max Quality | Playlist Support |
 |----------|---------------------|-------------|------------------|
 | [Deezer](https://www.deezer.com/) (default) | Yes | FLAC 16-bit | Yes |
 | [Qobuz](https://www.qobuz.com/) | Yes | FLAC 24-bit/192kHz | Yes |
+| [Tidal](https://tidal.com/) | Yes | FLAC 24-bit/192kHz | Yes |
 | [Yandex Music](https://music.yandex.ru) | Yes | FLAC 16-bit | Yes |
 | [SquidWTF](https://squid.wtf/) (Qobuz, Tidal) | No | Source-dependent | Tidal |
 
-> **⚠️ SquidWTF is deprecated.** The upstream squid.wtf music services are down. The Qobuz backend no longer resolves and public Tidal instances only serve search results and 30-second previews. The Amazon Music and Deemix backends have been removed. The provider is kept for users running a self-hosted Tidal instance and may be removed in a future release. The default provider is now Deezer.
+> **⚠️ SquidWTF is deprecated.** The upstream squid.wtf music services are down. The Qobuz backend no longer resolves and public Tidal instances only serve search results and 30-second previews. The Amazon Music and Deemix backends have been removed. The provider is kept for users running a self-hosted Tidal instance and may be removed in a future release. The default provider is now Deezer, and Tidal is available as a native provider that streams from your own account.
 
 See the [Supported Music Providers](https://github.com/V1ck3s/octo-fiesta/wiki/Supported-Music-Providers) wiki page for detailed information.
 
@@ -88,6 +91,7 @@ See the [Configuration](https://github.com/V1ck3s/octo-fiesta/wiki/Configuration
 
 - [Getting Deezer Credentials (ARL Token)](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Deezer-Credentials-(ARL-Token))
 - [Getting Qobuz Credentials (User ID & Token)](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token))
+- [Getting Tidal Credentials (OAuth Tokens)](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Tidal-Credentials-(OAuth-Tokens))
 - **SquidWTF** (deprecated): No credentials needed
 - **Yandex**: credentials may be obtained by authorizing official Yandex Music OAuth client [here](https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d). After authorization OAuth token will appear in the address bar in `#access_token=` fragment
 
@@ -105,7 +109,8 @@ See the [Configuration](https://github.com/V1ck3s/octo-fiesta/wiki/Configuration
                         │ Music Providers │
                         │  - Deezer       │
                         │  - Qobuz        │
-                        │  - SquidWTF     │
+                        │  - Tidal        │
+                        │  - Yandex       │
                         └─────────────────┘
 ```
 

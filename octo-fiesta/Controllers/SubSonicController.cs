@@ -383,7 +383,21 @@ public partial class SubsonicController : ControllerBase
                     album.ArtistId = artist.Id;
                 }
             }
-            
+
+            // The library can hold albums the provider does not list, and a client that
+            // navigated here from an external track would otherwise never see them.
+            var ownedAlbums = await GetLocalArtistAlbumsAsync(artist.Name, parameters);
+            if (ownedAlbums.Count > 0)
+            {
+                var ownedTitles = ownedAlbums
+                    .Select(a => StringNormalizer.CreateComparisonKey(a.Title))
+                    .ToHashSet();
+
+                albums = ownedAlbums
+                    .Concat(albums.Where(a => !ownedTitles.Contains(StringNormalizer.CreateComparisonKey(a.Title))))
+                    .ToList();
+            }
+
             return _responseBuilder.CreateArtistResponse(format, artist, albums);
         }
 
@@ -395,12 +409,14 @@ public partial class SubsonicController : ControllerBase
         }
 
         var navidromeContent = Encoding.UTF8.GetString(navidromeResult.Body);
+        var isJson = format == "json" || navidromeResult.ContentType?.Contains("json") == true;
         string artistName = "";
         string localArtistId = id; // Keep the local artist ID for merged albums
         var localAlbums = new List<object>();
         object? artistData = null;
+        XElement? artistXml = null;
 
-        if (format == "json" || navidromeResult.ContentType?.Contains("json") == true)
+        if (isJson)
         {
             var jsonDoc = JsonDocument.Parse(navidromeContent);
             if (jsonDoc.RootElement.TryGetProperty("subsonic-response", out var response) &&
@@ -418,8 +434,13 @@ public partial class SubsonicController : ControllerBase
                 }
             }
         }
+        else
+        {
+            artistXml = ParseNavidromeXmlElement(navidromeContent, "artist");
+            artistName = artistXml?.Attribute("name")?.Value ?? "";
+        }
 
-        if (string.IsNullOrEmpty(artistName) || artistData == null)
+        if (string.IsNullOrEmpty(artistName) || (isJson ? artistData == null : artistXml == null))
         {
             return File(navidromeResult.Body, navidromeResult.ContentType ?? "application/json");
         }
@@ -432,6 +453,10 @@ public partial class SubsonicController : ControllerBase
                 var normalizedName = StringNormalizer.CreateComparisonKey(nameObj?.ToString() ?? "");
                 localAlbumNames.Add(normalizedName);
             }
+        }
+        foreach (var album in ChildElements(artistXml, "album"))
+        {
+            localAlbumNames.Add(StringNormalizer.CreateComparisonKey(album.Attribute("name")?.Value));
         }
 
         var candidates = (await _metadataService.SearchArtistsAsync(artistName, 20))
@@ -472,15 +497,33 @@ public partial class SubsonicController : ControllerBase
             album.ArtistId = localArtistId;
         }
 
-        var mergedAlbums = localAlbums.ToList();
-        foreach (var externalAlbum in externalAlbums)
+        var newAlbums = externalAlbums
+            .Where(a => !localAlbumNames.Contains(StringNormalizer.CreateComparisonKey(a.Title)))
+            .ToList();
+
+        // XML clients get the Navidrome artist element back untouched, external albums
+        // appended, so their local albums keep every attribute the server sent.
+        if (!isJson)
         {
-            var normalizedExternalName = StringNormalizer.CreateComparisonKey(externalAlbum.Title);
-            if (!localAlbumNames.Contains(normalizedExternalName))
+            var ns = XNamespace.Get("http://subsonic.org/restapi");
+            foreach (var externalAlbum in newAlbums)
             {
-                mergedAlbums.Add(_responseBuilder.ConvertAlbumToJson(externalAlbum));
+                artistXml!.Add(_responseBuilder.ConvertAlbumToXml(externalAlbum, ns));
             }
+            artistXml!.SetAttributeValue("albumCount", ChildElements(artistXml, "album").Count());
+
+            var doc = new XDocument(
+                new XElement(ns + "subsonic-response",
+                    new XAttribute("status", "ok"),
+                    new XAttribute("version", "1.16.1"),
+                    artistXml));
+
+            return new ContentResult { Content = doc.ToString(), ContentType = "application/xml; charset=utf-8" };
         }
+
+        var mergedAlbums = localAlbums
+            .Concat(newAlbums.Select(a => _responseBuilder.ConvertAlbumToJson(a)))
+            .ToList();
 
         if (artistData is Dictionary<string, object> artistDict)
         {
@@ -494,6 +537,81 @@ public partial class SubsonicController : ControllerBase
             version = "1.16.1",
             artist = artistData
         });
+    }
+
+    private static readonly string[] CollaborationWords = { "feat", "featuring", "ft", "with", "and", "x" };
+
+    /// <summary>
+    /// True when a candidate album is credited to the same artist, allowing the provider to
+    /// spell out collaborators the library leaves out, as in "No Etiquette feat. Rayna" or
+    /// "Dion &amp; The Belmonts". A homonym like "Gary Grimes" does not extend "Grimes" and
+    /// is rejected.
+    /// </summary>
+    private static bool IsSameArtistOrCollaboration(string? candidateArtist, string artistName)
+    {
+        var candidateKey = StringNormalizer.CreateComparisonKey(candidateArtist);
+        var artistKey = StringNormalizer.CreateComparisonKey(artistName);
+
+        if (candidateKey.Length == 0 || artistKey.Length == 0)
+        {
+            return false;
+        }
+
+        if (candidateKey == artistKey)
+        {
+            return true;
+        }
+
+        if (!ExtendsAtWordBoundary(candidateKey, artistKey))
+        {
+            return false;
+        }
+
+        var suffix = candidateKey[artistKey.Length..].TrimStart();
+        if (suffix.StartsWith('&') || suffix.StartsWith(','))
+        {
+            return true;
+        }
+
+        var firstWord = suffix.Split(' ')[0].Trim('.');
+        return CollaborationWords.Contains(firstWord);
+    }
+
+    /// <summary>
+    /// True when one title is the other followed by an edition suffix, such as "Visions" and
+    /// "Visions (Deluxe Edition)". The suffix has to open on punctuation, so a longer title
+    /// that keeps naming things, like "The Best Of Dion &amp; The Belmonts", stays a distinct
+    /// album, and so does a title that merely contains the other, like "Starhand Visions".
+    /// </summary>
+    private static bool IsSameAlbumWithEditionSuffix(string? candidateTitle, string albumName)
+    {
+        var candidateKey = StringNormalizer.CreateComparisonKey(candidateTitle);
+        var albumKey = StringNormalizer.CreateComparisonKey(albumName);
+
+        if (candidateKey.Length == 0 || albumKey.Length == 0)
+        {
+            return false;
+        }
+
+        return HasEditionSuffix(candidateKey, albumKey) || HasEditionSuffix(albumKey, candidateKey);
+    }
+
+    private static bool HasEditionSuffix(string longer, string shorter)
+    {
+        if (!ExtendsAtWordBoundary(longer, shorter))
+        {
+            return false;
+        }
+
+        var suffix = longer[shorter.Length..].TrimStart();
+        return suffix.StartsWith('(') || suffix.StartsWith('[') || suffix.StartsWith('-') || suffix.StartsWith(':');
+    }
+
+    private static bool ExtendsAtWordBoundary(string longer, string shorter)
+    {
+        return longer.Length > shorter.Length
+            && longer.StartsWith(shorter, StringComparison.Ordinal)
+            && !char.IsLetterOrDigit(longer[shorter.Length]);
     }
 
     /// <summary>
@@ -602,12 +720,14 @@ public partial class SubsonicController : ControllerBase
         }
 
         var navidromeContent = Encoding.UTF8.GetString(navidromeResult.Body);
+        var isJson = format == "json" || navidromeResult.ContentType?.Contains("json") == true;
         string albumName = "";
         string artistName = "";
         var localSongs = new List<object>();
         object? albumData = null;
+        XElement? albumXml = null;
 
-        if (format == "json" || navidromeResult.ContentType?.Contains("json") == true)
+        if (isJson)
         {
             var jsonDoc = JsonDocument.Parse(navidromeContent);
             if (jsonDoc.RootElement.TryGetProperty("subsonic-response", out var response) &&
@@ -627,7 +747,15 @@ public partial class SubsonicController : ControllerBase
             }
         }
 
-        if (string.IsNullOrEmpty(albumName) || string.IsNullOrEmpty(artistName) || albumData == null)
+        else
+        {
+            albumXml = ParseNavidromeXmlElement(navidromeContent, "album");
+            albumName = albumXml?.Attribute("name")?.Value ?? "";
+            artistName = albumXml?.Attribute("artist")?.Value ?? "";
+        }
+
+        if (string.IsNullOrEmpty(albumName) || string.IsNullOrEmpty(artistName) ||
+            (isJson ? albumData == null : albumXml == null))
         {
             return File(navidromeResult.Body, navidromeResult.ContentType ?? "application/json");
         }
@@ -635,60 +763,87 @@ public partial class SubsonicController : ControllerBase
         var searchQuery = $"{artistName} {albumName}";
         var externalAlbumsSearch = await _metadataService.SearchAlbumsAsync(searchQuery, 5);
         Album? externalAlbum = null;
-        
-        // Find matching album on external service (exact match first)
-        foreach (var candidate in externalAlbumsSearch)
+
+        // Only a candidate credited to the same artist can be merged, otherwise a homonym
+        // such as "Gary Grimes" pours its tracks into an album by "Grimes".
+        var sameArtistCandidates = externalAlbumsSearch
+            .Where(c => IsSameArtistOrCollaboration(c.Artist, artistName))
+            .ToList();
+
+        var albumKey = StringNormalizer.CreateComparisonKey(albumName);
+        var match = sameArtistCandidates
+                .FirstOrDefault(c => StringNormalizer.CreateComparisonKey(c.Title) == albumKey)
+            ?? sameArtistCandidates
+                .FirstOrDefault(c => IsSameAlbumWithEditionSuffix(c.Title, albumName));
+
+        if (match != null)
         {
-            if (candidate.Artist != null && 
-                candidate.Artist.Equals(artistName, StringComparison.OrdinalIgnoreCase) &&
-                candidate.Title.Equals(albumName, StringComparison.OrdinalIgnoreCase))
-            {
-                externalAlbum = await _metadataService.GetAlbumAsync(candidate.ExternalProvider!, candidate.ExternalId!);
-                break;
-            }
+            externalAlbum = await _metadataService.GetAlbumAsync(match.ExternalProvider!, match.ExternalId!);
         }
 
-        // Fallback to fuzzy match
-        if (externalAlbum == null)
+        var localSongTitles = new HashSet<string>();
+        foreach (var song in localSongs)
         {
-            foreach (var candidate in externalAlbumsSearch)
+            if (song is Dictionary<string, object> dict && dict.TryGetValue("title", out var titleObj))
             {
-                if (candidate.Artist != null && 
-                    candidate.Artist.Contains(artistName, StringComparison.OrdinalIgnoreCase) &&
-                    (candidate.Title.Contains(albumName, StringComparison.OrdinalIgnoreCase) ||
-                     albumName.Contains(candidate.Title, StringComparison.OrdinalIgnoreCase)))
-                {
-                    externalAlbum = await _metadataService.GetAlbumAsync(candidate.ExternalProvider!, candidate.ExternalId!);
-                    break;
-                }
+                var title = titleObj?.ToString() ?? "";
+                localSongTitles.Add(StringNormalizer.CreateComparisonKey(title));
+                localSongTitles.Add(StringNormalizer.CreateSongTitleDedupeKey(title));
             }
         }
-
-        if (externalAlbum != null && externalAlbum.Songs.Count > 0)
+        foreach (var song in ChildElements(albumXml, "song"))
         {
-            var localSongTitles = new HashSet<string>();
-            foreach (var song in localSongs)
+            var title = song.Attribute("title")?.Value;
+            localSongTitles.Add(StringNormalizer.CreateComparisonKey(title));
+            localSongTitles.Add(StringNormalizer.CreateSongTitleDedupeKey(title));
+        }
+
+        var newSongs = externalAlbum?.Songs
+            .Where(s => !localSongTitles.Contains(StringNormalizer.CreateComparisonKey(s.Title))
+                && !localSongTitles.Contains(StringNormalizer.CreateSongTitleDedupeKey(s.Title)))
+            .ToList() ?? new List<Song>();
+
+        // XML clients get the Navidrome album element back untouched, missing tracks
+        // appended, so their local songs keep every attribute the server sent.
+        if (!isJson)
+        {
+            if (newSongs.Count == 0)
             {
-                if (song is Dictionary<string, object> dict && dict.TryGetValue("title", out var titleObj))
-                {
-                    var normalizedTitle = StringNormalizer.CreateComparisonKey(titleObj?.ToString() ?? "");
-                    localSongTitles.Add(normalizedTitle);
-                    localSongTitles.Add(StringNormalizer.CreateSongTitleDedupeKey(titleObj?.ToString()));
-                }
+                return File(navidromeResult.Body, navidromeResult.ContentType ?? "application/xml");
             }
 
-            var mergedSongs = localSongs.ToList();
-            foreach (var externalSong in externalAlbum.Songs)
+            var ns = XNamespace.Get("http://subsonic.org/restapi");
+            var albumId = albumXml!.Attribute("id")?.Value;
+            var songElements = ChildElements(albumXml, "song").ToList();
+            songElements.AddRange(newSongs.Select(s => _responseBuilder.ConvertSongToXml(s, ns, albumId)));
+
+            foreach (var songElement in ChildElements(albumXml, "song").ToList())
             {
-                var normalizedExternalTitle = StringNormalizer.CreateComparisonKey(externalSong.Title);
-                if (!localSongTitles.Contains(normalizedExternalTitle)
-                    && !localSongTitles.Contains(StringNormalizer.CreateSongTitleDedupeKey(externalSong.Title)))
-                {
-                    mergedSongs.Add(_responseBuilder.ConvertSongToJson(externalSong));
-                }
+                songElement.Remove();
             }
 
-            mergedSongs = mergedSongs
+            var orderedSongs = songElements
+                .OrderBy(e => XmlAttributeInt(e, "discNumber"))
+                .ThenBy(e => XmlAttributeInt(e, "track"))
+                .ToList();
+
+            albumXml.Add(orderedSongs);
+            albumXml.SetAttributeValue("songCount", orderedSongs.Count);
+            albumXml.SetAttributeValue("duration", orderedSongs.Sum(e => XmlAttributeInt(e, "duration")));
+
+            var doc = new XDocument(
+                new XElement(ns + "subsonic-response",
+                    new XAttribute("status", "ok"),
+                    new XAttribute("version", "1.16.1"),
+                    albumXml));
+
+            return new ContentResult { Content = doc.ToString(), ContentType = "application/xml; charset=utf-8" };
+        }
+
+        if (newSongs.Count > 0 && albumData is Dictionary<string, object> albumDict)
+        {
+            var mergedSongs = localSongs
+                .Concat(newSongs.Select(s => _responseBuilder.ConvertSongToJson(s)))
                 .OrderBy(s => s is Dictionary<string, object> dict && dict.TryGetValue("discNumber", out var discNumber)
                     ? Convert.ToInt32(discNumber)
                     : 0)
@@ -697,21 +852,18 @@ public partial class SubsonicController : ControllerBase
                     : 0)
                 .ToList();
 
-            if (albumData is Dictionary<string, object> albumDict)
+            albumDict["song"] = mergedSongs;
+            albumDict["songCount"] = mergedSongs.Count;
+
+            var totalDuration = 0;
+            foreach (var song in mergedSongs)
             {
-                albumDict["song"] = mergedSongs;
-                albumDict["songCount"] = mergedSongs.Count;
-                
-                var totalDuration = 0;
-                foreach (var song in mergedSongs)
+                if (song is Dictionary<string, object> dict && dict.TryGetValue("duration", out var dur))
                 {
-                    if (song is Dictionary<string, object> dict && dict.TryGetValue("duration", out var dur))
-                    {
-                        totalDuration += Convert.ToInt32(dur);
-                    }
+                    totalDuration += Convert.ToInt32(dur);
                 }
-                albumDict["duration"] = totalDuration;
             }
+            albumDict["duration"] = totalDuration;
         }
 
         return _responseBuilder.CreateJsonResponse(new
@@ -788,6 +940,197 @@ public partial class SubsonicController : ControllerBase
     }
 
     #region Helper Methods
+
+    /// <summary>
+    /// Extracts a named element of a Subsonic XML response, or null when the payload is
+    /// not the expected answer.
+    /// </summary>
+    private XElement? ParseNavidromeXmlElement(string content, string localName)
+    {
+        try
+        {
+            var root = XDocument.Parse(content).Root;
+            if (root == null || root.Attribute("status")?.Value != "ok")
+            {
+                return null;
+            }
+
+            return root.Elements().FirstOrDefault(e => e.Name.LocalName == localName);
+        }
+        catch (System.Xml.XmlException ex)
+        {
+            _logger.LogDebug(ex, "Could not parse the Subsonic {LocalName} XML response", localName);
+            return null;
+        }
+    }
+
+    private static IEnumerable<XElement> ChildElements(XElement? parent, string localName)
+        => parent?.Elements().Where(e => e.Name.LocalName == localName) ?? Enumerable.Empty<XElement>();
+
+    private static int XmlAttributeInt(XElement element, string name)
+        => int.TryParse(element.Attribute(name)?.Value, out var value) ? value : 0;
+
+    /// <summary>
+    /// Returns the albums the library owns for an artist, matched by name. Empty when the
+    /// backing Subsonic server knows no artist under that name.
+    /// </summary>
+    private async Task<List<Album>> GetLocalArtistAlbumsAsync(string artistName, Dictionary<string, string> parameters)
+    {
+        var albums = new List<Album>();
+
+        if (string.IsNullOrWhiteSpace(artistName))
+        {
+            return albums;
+        }
+
+        var localArtistId = await FindLocalArtistIdAsync(artistName, parameters);
+        if (string.IsNullOrEmpty(localArtistId))
+        {
+            return albums;
+        }
+
+        var artistParameters = BuildJsonRelayParameters(parameters);
+        artistParameters["id"] = localArtistId;
+
+        var result = await _proxyService.RelaySafeAsync("rest/getArtist", artistParameters);
+        if (!result.Success || result.Body == null)
+        {
+            return albums;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(Encoding.UTF8.GetString(result.Body));
+            if (doc.RootElement.TryGetProperty("subsonic-response", out var response) &&
+                response.TryGetProperty("artist", out var artistElement) &&
+                artistElement.TryGetProperty("album", out var albumArray) &&
+                albumArray.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var albumElement in albumArray.EnumerateArray())
+                {
+                    var album = ParseLocalAlbum(albumElement);
+                    if (album != null)
+                    {
+                        albums.Add(album);
+                    }
+                }
+            }
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogDebug(ex, "Could not parse local albums of artist {ArtistName}", artistName);
+        }
+
+        return albums;
+    }
+
+    /// <summary>
+    /// Looks up a local artist by name, keeping the richest one when the library holds homonyms.
+    /// </summary>
+    private async Task<string?> FindLocalArtistIdAsync(string artistName, Dictionary<string, string> parameters)
+    {
+        var searchParameters = BuildJsonRelayParameters(parameters);
+        searchParameters["query"] = artistName;
+        searchParameters["artistCount"] = "20";
+        searchParameters["albumCount"] = "0";
+        searchParameters["songCount"] = "0";
+
+        var result = await _proxyService.RelaySafeAsync("rest/search3", searchParameters);
+        if (!result.Success || result.Body == null)
+        {
+            return null;
+        }
+
+        var nameKey = StringNormalizer.CreateComparisonKey(artistName);
+
+        try
+        {
+            using var doc = JsonDocument.Parse(Encoding.UTF8.GetString(result.Body));
+            if (!doc.RootElement.TryGetProperty("subsonic-response", out var response) ||
+                !response.TryGetProperty("searchResult3", out var searchResult) ||
+                !searchResult.TryGetProperty("artist", out var artistArray) ||
+                artistArray.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            string? bestId = null;
+            var bestAlbumCount = -1;
+
+            foreach (var artistElement in artistArray.EnumerateArray())
+            {
+                var name = artistElement.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : null;
+                if (StringNormalizer.CreateComparisonKey(name) != nameKey)
+                {
+                    continue;
+                }
+
+                var id = artistElement.TryGetProperty("id", out var idElement) ? idElement.GetString() : null;
+                if (string.IsNullOrEmpty(id))
+                {
+                    continue;
+                }
+
+                var albumCount = artistElement.TryGetProperty("albumCount", out var countElement) &&
+                                 countElement.TryGetInt32(out var count)
+                    ? count
+                    : 0;
+
+                if (albumCount > bestAlbumCount)
+                {
+                    bestId = id;
+                    bestAlbumCount = albumCount;
+                }
+            }
+
+            return bestId;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogDebug(ex, "Could not parse local artist search for {ArtistName}", artistName);
+            return null;
+        }
+    }
+
+    private static Album? ParseLocalAlbum(JsonElement element)
+    {
+        var id = element.TryGetProperty("id", out var idElement) ? idElement.GetString() : null;
+        var name = element.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : null;
+
+        if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(name))
+        {
+            return null;
+        }
+
+        return new Album
+        {
+            Id = id,
+            Title = name,
+            Artist = element.TryGetProperty("artist", out var artistElement) ? artistElement.GetString() ?? "" : "",
+            ArtistId = element.TryGetProperty("artistId", out var artistIdElement) ? artistIdElement.GetString() : null,
+            Year = element.TryGetProperty("year", out var yearElement) && yearElement.TryGetInt32(out var year) ? year : null,
+            SongCount = element.TryGetProperty("songCount", out var countElement) && countElement.TryGetInt32(out var count) ? count : null,
+            Genre = element.TryGetProperty("genre", out var genreElement) ? genreElement.GetString() : null,
+            IsLocal = true
+        };
+    }
+
+    /// <summary>
+    /// Copies the client credentials for a server-to-server relay, dropping the parameters
+    /// of the incoming request and forcing JSON so the answer can be parsed whatever
+    /// format the client asked for.
+    /// </summary>
+    private static Dictionary<string, string> BuildJsonRelayParameters(Dictionary<string, string> parameters)
+    {
+        var relayParameters = new Dictionary<string, string>(parameters);
+        relayParameters.Remove("id");
+        relayParameters.Remove("query");
+        relayParameters.Remove("artistCount");
+        relayParameters.Remove("albumCount");
+        relayParameters.Remove("songCount");
+        relayParameters["f"] = "json";
+        return relayParameters;
+    }
 
     private IActionResult MergeSearchResults(
         (byte[]? Body, string? ContentType, bool Success) subsonicResult,
