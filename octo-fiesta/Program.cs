@@ -17,6 +17,21 @@ using octo_fiesta.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// The flat names used in .env / docker-compose (GDSTUDIO_SOURCE, ...) also work as plain container
+// variables; the GDStudio__* form, when set, wins.
+{
+    var aliases = new Dictionary<string, string?>();
+    foreach (var (env, key) in new[] {
+        ("GDSTUDIO_SOURCE", "Source"), ("GDSTUDIO_TIMEOUT_SECONDS", "TimeoutSeconds"), ("GDSTUDIO_BR", "Br"),
+        ("GDSTUDIO_API", "Api"), ("GDSTUDIO_PROXY", "Proxy") })
+    {
+        var value = Environment.GetEnvironmentVariable(env);
+        if (!string.IsNullOrWhiteSpace(value) && builder.Configuration[$"GDStudio:{key}"] is null)
+            aliases[$"GDStudio:{key}"] = value;
+    }
+    if (aliases.Count > 0) builder.Configuration.AddInMemoryCollection(aliases);
+}
+
 // Interactive Tidal OAuth login. Runs the device authorization flow and exits without
 // starting the server, so the tokens can be minted before the first real run.
 if (TidalLoginCommand.IsRequested(args))

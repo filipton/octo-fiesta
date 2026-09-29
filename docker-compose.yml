@@ -136,6 +136,8 @@ services:
       # ===== GDSTUDIO SETTINGS (MUSIC_SERVICE=GDStudio) =====
       # Upstream source, one of the "stable" sources (netease, joox, bilibili). Default: netease
       - GDStudio__Source=${GDSTUDIO_SOURCE:-netease}
+      # Per-source timeout in seconds for search/metadata calls (3x for the first call to each source); a slow source is logged and skipped. Default: 8
+      - GDStudio__TimeoutSeconds=${GDSTUDIO_TIMEOUT_SECONDS:-8}
       # Audio quality (br): 128, 192, 320, 740 (16-bit lossless), 999 (24-bit lossless). Default: 999
       # If unsupported or empty, the next lower option is tried once.
       - GDStudio__Br=${GDSTUDIO_BR:-999}
