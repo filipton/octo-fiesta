@@ -50,8 +50,12 @@ public class CompositeDownloadService : IDownloadService
 
     public async Task<bool> IsAvailableAsync()
     {
+        // One offline provider must not hide the others
         foreach (var p in Providers)
-            if (await p.Service.IsAvailableAsync()) return true;
+        {
+            try { if (await p.Service.IsAvailableAsync()) return true; }
+            catch { /* treated as unavailable */ }
+        }
         return false;
     }
 }
