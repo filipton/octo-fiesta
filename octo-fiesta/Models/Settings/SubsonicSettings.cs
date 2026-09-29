@@ -91,7 +91,12 @@ public enum MusicService
     /// <summary>
     /// Apple Music through an alacarte instance (see AppleMusicSettings)
     /// </summary>
-    AppleMusic
+    AppleMusic,
+
+    /// <summary>
+    /// GD Studio aggregator API (netease, joox, bilibili, ...)
+    /// </summary>
+    GDStudio
 }
 
 public partial class SubsonicSettings
@@ -134,7 +139,7 @@ public partial class SubsonicSettings
     /// <summary>
     /// Music service(s) to use (default: Deezer)
     /// Environment variable: MUSIC_SERVICE
-    /// Values: "Deezer", "Qobuz", "Tidal", "Yandex", "AppleMusic", "SquidWTF" (deprecated).
+    /// Values: "Deezer", "Qobuz", "Tidal", "Yandex", "GDStudio", "AppleMusic", "SquidWTF" (deprecated).
     /// Several can be combined with "," (e.g. "Deezer,Qobuz"): searches are merged and
     /// providers without valid credentials are skipped with a warning.
     /// </summary>

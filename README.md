@@ -41,6 +41,7 @@ The upstream sync workflow requires a repository secret named `SYNC_TOKEN`. The 
 | [Qobuz](https://www.qobuz.com/) | Yes | FLAC 24-bit/192kHz | Yes |
 | [Tidal](https://tidal.com/) | Yes | FLAC 24-bit/192kHz | Yes |
 | [Yandex Music](https://music.yandex.ru) | Yes | FLAC 16-bit | Yes |
+| [GD Studio](https://music-api.gdstudio.xyz) | Yes | up to FLAC (source-dependent) | No |
 | [SquidWTF](https://squid.wtf/) (Qobuz, Tidal) | No | Source-dependent | Tidal |
 | [Apple Music](https://music.apple.com/) via [alacarte](https://github.com/sosjalapeno/alacarte) | An alacarte instance | ALAC / FLAC 24-bit/192kHz | Yes |
 
@@ -123,6 +124,29 @@ See the [Configuration](https://github.com/V1ck3s/octo-fiesta/wiki/Configuration
 - **SquidWTF** (deprecated): No credentials needed
 - **Yandex**: credentials may be obtained by authorizing official Yandex Music OAuth client [here](https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d). After authorization OAuth token will appear in the address bar in `#access_token=` fragment
 
+### GDStudio
+
+[GD Studio/GD音乐台](https://music-api.gdstudio.xyz) needs no credentials. Set `MUSIC_SERVICE=GDStudio`. Tracks, albums and artists are supported (albums and artists are derived from search results and identified by name); playlists are not.
+
+| Variable | Default | Description |
+|---|---|---|
+| `GDStudio__Source` (`GDSTUDIO_SOURCE`) | `netease` | Upstream source(s), comma separated, e.g. `netease,joox`. Any value the API accepts works (not validated). Each source is queried separately (N sources = N requests per search) and results are merged; a source that fails or exceeds `GDStudio__TimeoutSeconds` (default 15) is logged as an error and skipped. |
+| `GDStudio__Br` (`GDSTUDIO_BR`) | `999` | Audio quality, see below. |
+| `GDStudio__Api` (`GDSTUDIO_API`) | `https://music-api.gdstudio.xyz/api.php` | API endpoint. |
+| `GDStudio__Proxy` (`GDSTUDIO_PROXY`) | empty | Proxy for all API and download requests: `http://`, `https://` or `socks5://` URL, e.g. `socks5://127.0.0.1:1080`. |
+
+Available `br` values:
+
+| br | Quality |
+|---|---|
+| `128` | 128 kbps |
+| `192` | 192 kbps |
+| `320` | 320 kbps |
+| `740` | 16-bit lossless |
+| `999` | 24-bit lossless |
+
+If the requested `br` is not supported or the API returns an empty response, the next lower value is tried once (e.g. `999` falls back to `740` only, then the download fails). `128` has no fallback. The API is rate limited to about 50 requests per 5 minutes.
+
 ## Architecture
 
 ```
@@ -185,4 +209,5 @@ GPL-3.0
 - [Qobuz](https://www.qobuz.com/) - Hi-Res music streaming service
 - [SquidWTF](https://squid.wtf/) - Third-party music API service
 - [Yandex Music](https://music.yandex.com) - Music streaming service
+- [GD Studio/GD音乐台](https://music-api.gdstudio.xyz) - Third-party music API service
 - [Subsonic API](http://www.subsonic.org/pages/api.jsp) - The API specification
