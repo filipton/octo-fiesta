@@ -684,7 +684,7 @@ public class SubsonicResponseBuilder
         if (song != null)
         {
             var (suffix, _, br) = GetSuffixContentTypeAndBitrate(song);
-            container = suffix == "Remote" ? "mp3" : suffix;
+            container = br > 0 ? suffix : "mp3"; // br == 0: no file yet, the suffix is only the origin label
             bitRate = br > 0 ? br : 128;
         }
 
@@ -734,8 +734,13 @@ public class SubsonicResponseBuilder
             return ("mp3", "audio/mpeg", 128);
         }
 
-        // Default for external providers (Deezer, Qobuz, SquidWTF) without cached file
-        return ("Remote", "audio/mpeg", 0);
+        // External track without a cached file: no real format yet, so the suffix says where it comes from,
+        // e.g. "AppleMusic" or, for an aggregator with per-source ids ("apple~123"), "GDStudio-Apple".
+        var origin = Enum.TryParse<octo_fiesta.Models.Settings.MusicService>(song.ExternalProvider, ignoreCase: true, out var service)
+            ? service.ToString() : song.ExternalProvider ?? "Remote";
+        if (song.ExternalId is { } id && id.IndexOf('~') is > 0 and var tilde)
+            origin += "-" + char.ToUpperInvariant(id[0]) + id[1..tilde];
+        return (origin, "audio/mpeg", 0);
     }
 
     private object ConvertJsonValue(JsonElement value)

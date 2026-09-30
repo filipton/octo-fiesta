@@ -91,7 +91,12 @@ public enum MusicService
     /// <summary>
     /// Apple Music through an alacarte instance (see AppleMusicSettings)
     /// </summary>
-    AppleMusic
+    AppleMusic,
+
+    /// <summary>
+    /// GD Studio aggregator API (netease, joox, bilibili, ...)
+    /// </summary>
+    GDStudio
 }
 
 public partial class SubsonicSettings
@@ -132,11 +137,34 @@ public partial class SubsonicSettings
     public DownloadMode DownloadMode { get; set; } = DownloadMode.Track;
     
     /// <summary>
-    /// Music service to use (default: Deezer)
+    /// Music service(s) to use (default: Deezer)
     /// Environment variable: MUSIC_SERVICE
-    /// Values: "Deezer", "Qobuz", "Tidal", "Yandex", "SquidWTF" (deprecated)
+    /// Values: "Deezer", "Qobuz", "Tidal", "Yandex", "GDStudio", "AppleMusic", "SquidWTF" (deprecated).
+    /// Several can be combined with "," (e.g. "Deezer,Qobuz"): searches are merged and
+    /// providers without valid credentials are skipped with a warning.
     /// </summary>
-    public MusicService MusicService { get; set; } = MusicService.Deezer;
+    [Microsoft.Extensions.Configuration.ConfigurationKeyName("MusicService")]
+    public string MusicServices { get; set; } = MusicService.Deezer.ToString();
+
+    /// <summary>
+    /// Parses a ","-separated list (also "|" or ";") (case-insensitive) into distinct services; unrecognised
+    /// entries are reported in <paramref name="unknown"/>. Blank input means Deezer.
+    /// </summary>
+    public static List<MusicService> ParseMusicServices(string? value, out List<string> unknown)
+    {
+        unknown = [];
+        var result = new List<MusicService>();
+        foreach (var part in (value ?? "").Split(['|', ',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (Enum.TryParse<MusicService>(part, ignoreCase: true, out var svc) && Enum.IsDefined(svc))
+            {
+                if (!result.Contains(svc)) result.Add(svc);
+            }
+            else unknown.Add(part);
+        }
+        if (result.Count == 0 && unknown.Count == 0) result.Add(MusicService.Deezer);
+        return result;
+    }
     
     /// <summary>
     /// Storage mode for downloaded files (default: Permanent)
