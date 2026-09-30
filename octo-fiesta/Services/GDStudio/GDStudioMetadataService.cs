@@ -195,17 +195,8 @@ public class GDStudioMetadataService : IMusicMetadataService
             });
         }
         return lists.SelectMany(l => l.Select((t, i) => (t, i))).OrderBy(x => x.i).Select(x => x.t)
-            .Where(t => t.Artist.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase)) ||
-                        t.Id.StartsWith("apple~", StringComparison.OrdinalIgnoreCase))
-            .Select(t =>
-            {
-                if (t.Id.StartsWith("apple~", StringComparison.OrdinalIgnoreCase) &&
-                    !t.Artist.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase)))
-                {
-                    return t with { Artist = [..t.Artist, name] };
-                }
-                return t;
-            }).ToList();
+            .Where(t => t.Artist.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
     }
 
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
