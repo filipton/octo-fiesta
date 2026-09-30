@@ -26,8 +26,7 @@ var builder = WebApplication.CreateBuilder(args);
         ("TimeoutSeconds", new[] { "GDSTUDIO_TIMEOUT_SECONDS", "GDSTUDIO__TIMEOUT_SECONDS", "GDSTUDIO__TIMEOUTSECONDS", "GDSTUDIO_TIMEOUTSECONDS" }),
         ("Br", new[] { "GDSTUDIO_BR", "GDSTUDIO__BR" }),
         ("Api", new[] { "GDSTUDIO_API", "GDSTUDIO__API" }),
-        ("Proxy", new[] { "GDSTUDIO_PROXY", "GDSTUDIO__PROXY" }),
-        ("Plugin", new[] { "GDSTUDIO_PLUGIN", "GDSTUDIO__PLUGIN" })
+        ("Proxy", new[] { "GDSTUDIO_PROXY", "GDSTUDIO__PROXY" })
     };
     foreach (var (key, envVars) in aliasDefs)
     {

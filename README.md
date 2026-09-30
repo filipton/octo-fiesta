@@ -135,7 +135,6 @@ See the [Configuration](https://github.com/V1ck3s/octo-fiesta/wiki/Configuration
 | `GDStudio__Br` (`GDSTUDIO_BR`) | `999` | Audio quality, see below. |
 | `GDStudio__Api` (`GDSTUDIO_API`) | `https://music-api.gdstudio.xyz/api.php` | API endpoint. |
 | `GDStudio__Proxy` (`GDSTUDIO_PROXY`) | empty | Proxy for all API and download requests: `http://`, `https://` or `socks5://` URL, e.g. `socks5://127.0.0.1:1080`. |
-| `GDStudio__Plugin` (`GDSTUDIO_PLUGIN`) | `/config/gdstudio/gdstudio-proxy.dll` | Optional plugin providing request signing handlers (e.g. for `apple` source). |
 
 Available `br` values:
 
