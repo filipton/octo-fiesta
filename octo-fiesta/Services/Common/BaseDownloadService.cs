@@ -110,7 +110,13 @@ public abstract class BaseDownloadService : IDownloadService
         _serviceProvider = serviceProvider;
         Logger = logger;
 
-        DownloadPath = configuration["Library:DownloadPath"] ?? "./downloads";
+        // Optional per-provider override (e.g. AppleMusic__DownloadPath), checked before the
+        // shared Library:DownloadPath - lets a provider like Apple Music (via alacarte) resolve
+        // downloads under its own tool's library folder instead. IConfiguration keys are
+        // case-insensitive, so ProviderName's lowercase form ("applemusic") matches the
+        // PascalCase env var section ("AppleMusic") without any extra mapping.
+        var providerDownloadPath = configuration[$"{ProviderName}:DownloadPath"];
+        DownloadPath = providerDownloadPath ?? configuration["Library:DownloadPath"] ?? "./downloads";
         CachePath = PathHelper.GetCachePath();
 
         if (!Directory.Exists(DownloadPath))
@@ -873,23 +879,39 @@ public abstract class BaseDownloadService : IDownloadService
         var albumFolder = Path.GetDirectoryName(outputPath)!;
         EnsureDirectoryExists(albumFolder);
 
-        if (IOFile.Exists(outputPath))
+        // Same file name already on disk: keep it unless bitrate upgrades are allowed and the
+        // incoming track is better (decided before reading the stream); a better one is written
+        // beside the old file and swapped in on completion.
+        var collided = IOFile.Exists(outputPath);
+        if (collided && !(SubsonicSettings.AllowBitrateUpgrade && IsBitrateUpgrade(outputPath, result.DownloadedQuality)))
         {
-            throw new InvalidOperationException(
-                $"Refusing to overwrite '{outputPath}' — file already exists and the pre-download check did not catch it. " +
-                "This indicates a bug in the pre-download existence probe.");
+            Logger.LogInformation("File already exists, skipping download: {Path}", outputPath);
+            await result.DownloadStream.DisposeAsync();
+            return outputPath;
         }
+        var writePath = collided
+            ? Path.Combine(albumFolder, Path.GetFileNameWithoutExtension(outputPath) + ".new" + Path.GetExtension(outputPath))
+            : outputPath;
 
         try
         {
             // Download the file with progress logging and stall detection
-            await using var outputFile = IOFile.Create(outputPath);
+            await using var outputFile = IOFile.Create(writePath);
             await CopyWithProgressAsync(result.DownloadStream, outputFile, song.Title, cancellationToken);
             await outputFile.DisposeAsync();
 
             // Detect actual audio format from magic bytes and rename if the extension is wrong.
             // This catches cases where the stream is raw FLAC but we assumed MP4 container.
-            outputPath = CorrectExtensionIfNeeded(outputPath);
+            writePath = CorrectExtensionIfNeeded(writePath);
+            outputPath = writePath;
+
+            if (collided)
+            {
+                outputPath = Path.Combine(albumFolder,
+                    Path.GetFileNameWithoutExtension(writePath)[..^".new".Length] + Path.GetExtension(writePath));
+                Logger.LogInformation("Replacing {Path} with higher bitrate download", outputPath);
+                IOFile.Move(writePath, outputPath, overwrite: true);
+            }
 
             Logger.LogInformation("Downloaded file to: {Path}", outputPath);
 
@@ -915,9 +937,23 @@ public abstract class BaseDownloadService : IDownloadService
         }
         catch
         {
-            TryDeleteIncompleteFile(outputPath);
+            TryDeleteIncompleteFile(writePath);
             throw;
         }
+    }
+
+    // ponytail: any existing .flac counts as top quality (16 vs 24-bit not compared)
+    private static bool IsBitrateUpgrade(string existingPath, string? newQuality)
+    {
+        if (string.IsNullOrEmpty(newQuality) || existingPath.EndsWith(".flac", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (newQuality.StartsWith("FLAC", StringComparison.OrdinalIgnoreCase))
+            return true;
+        // Lossy quality strings end in the bitrate, e.g. MP3_320
+        if (!int.TryParse(newQuality[(newQuality.LastIndexOf('_') + 1)..], out var newKbps))
+            return false;
+        try { return newKbps > TagLib.File.Create(existingPath).Properties.AudioBitrate; }
+        catch { return false; }
     }
 
     // Reads the first bytes of the written file, detects the audio format, and renames
