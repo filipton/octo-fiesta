@@ -91,7 +91,7 @@ public class GDStudioMetadataService : IMusicMetadataService
     private async Task<List<GDStudioTrack>> FetchCore(string api, string name, int count, int page, TimeSpan timeout)
     {
         var url = _s.Url($"types=search&source={Uri.EscapeDataString(api)}"
-                  + $"&name={Uri.EscapeDataString(name)}&count={count}&pages={page}");
+                  + $"&name={Uri.EscapeDataString(name)}&count={count}" + (page > 1 ? $"&pages={page}" : ""));
         // Time spent queued for a slot does not count against the request timeout, only the request and its retry do
         using (var queue = new CancellationTokenSource(TimeSpan.FromSeconds(60)))
             await _gate.WaitAsync(queue.Token);
@@ -116,18 +116,36 @@ public class GDStudioMetadataService : IMusicMetadataService
         finally { _gate.Release(); }
     }
 
+    // Some sources (apple) answer count > 50 with an empty list instead of an error. When a big first-page request
+    // comes back empty it is asked again with 50; if that returns tracks, the source stays capped at 50.
+    private const int SafeCount = 50;
+    private readonly ConcurrentDictionary<string, int> _countCap = new();
+
     // One page of one source (`suffix` selects e.g. "_album"). Failures and timeouts are logged, not thrown:
     // Ok is false and Tracks is empty, so the caller can keep what the other sources returned.
-    private async Task<(List<GDStudioTrack> Tracks, bool Ok)> QuerySourceAsync(string source, string suffix, string name, int count, int page)
+    // Asked is the count actually used, which is what a "last page" check has to compare against.
+    private async Task<(List<GDStudioTrack> Tracks, bool Ok, int Asked)> QuerySourceAsync(string source, string suffix, string name, int count, int page)
     {
         var api = source + suffix; // what the API sees, e.g. netease_album
         var seconds = _warmed.TryAdd(api, 0) ? _s.TimeoutSeconds * 3 : _s.TimeoutSeconds;
+        var timeout = TimeSpan.FromSeconds(seconds);
         var watch = System.Diagnostics.Stopwatch.StartNew();
+        var asked = _countCap.TryGetValue(api, out var cap) ? Math.Min(count, cap) : count;
         try
         {
-            var results = await Fetch(api, name, count, page, TimeSpan.FromSeconds(seconds));
+            var results = await Fetch(api, name, asked, page, timeout);
+            if (results.Count == 0 && asked > SafeCount && page == 1)
+            {
+                var smaller = await Fetch(api, name, SafeCount, page, timeout);
+                if (smaller.Count > 0) // the big count was the problem, not an empty result: cap this source
+                {
+                    _logger.LogWarning("GDStudio {Source} returned nothing for count={Count} but {Results} for {Safe}, capping this source at {Safe}", api, asked, smaller.Count, SafeCount, SafeCount);
+                    _countCap[api] = asked = SafeCount;
+                    results = smaller;
+                }
+            }
             _logger.LogInformation("GDStudio {Source} '{Query}' (count={Count}, page={Page}) -> {Results} results in {Ms} ms",
-                api, name, count, page, results.Count, watch.ElapsedMilliseconds);
+                api, name, asked, page, results.Count, watch.ElapsedMilliseconds);
             return (results.Where(t => !string.IsNullOrEmpty(t.Id))
                 .Select(t =>
                 {
@@ -140,7 +158,7 @@ public class GDStudioMetadataService : IMusicMetadataService
                         artists = [..artists, name];
                     }
                     return t with { Id = id, Artist = artists };
-                }).ToList(), true);
+                }).ToList(), true, asked);
         }
         catch (OperationCanceledException)
         {
@@ -150,7 +168,7 @@ public class GDStudioMetadataService : IMusicMetadataService
         {
             _logger.LogError(ex, "GDStudio source '{Source}' failed for '{Query}' (page {Page})", api, name, page);
         }
-        return ([], false);
+        return ([], false, asked);
     }
 
     // Queries every configured source in parallel and returns only when all of them have answered (or failed),
@@ -175,11 +193,11 @@ public class GDStudioMetadataService : IMusicMetadataService
         async Task<List<GDStudioTrack>> Source(string source)
         {
             // Page 1 tells whether there is more; the remaining pages then go out together (the gate still caps the rate)
-            var (first, ok) = await QuerySourceAsync(source, "", name, MaxCount, 1);
+            var (first, ok, asked) = await QuerySourceAsync(source, "", name, MaxCount, 1);
             if (!ok) { complete = false; return first; }
-            if (first.Count < MaxCount) return first;
+            if (first.Count < asked) return first; // short page: that was the last one
 
-            var rest = await Task.WhenAll(Enumerable.Range(2, ArtistPages - 1).Select(page => QuerySourceAsync(source, "", name, MaxCount, page)));
+            var rest = await Task.WhenAll(Enumerable.Range(2, ArtistPages - 1).Select(page => QuerySourceAsync(source, "", name, asked, page)));
             if (rest.Any(r => !r.Ok)) complete = false;
             return first.Concat(rest.SelectMany(r => r.Tracks)).ToList();
         }

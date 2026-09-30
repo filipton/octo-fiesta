@@ -81,7 +81,7 @@ public class GDStudioRateLimitTests
             $$"""{"id":"{{i}}","name":"S{{i}}","artist":["{{artist}}"],"album":"{{album}}","pic_id":null}""")) + "]";
 
     private static string PageOf(HttpRequestMessage r)
-        => System.Web.HttpUtility.ParseQueryString(r.RequestUri!.Query)["pages"]!;
+        => System.Web.HttpUtility.ParseQueryString(r.RequestUri!.Query)["pages"] ?? "1"; // page 1 sends no pages param
 
     private sealed class PagedHandler(Func<string, HttpResponseMessage> byPage) : HttpMessageHandler
     {
@@ -136,5 +136,44 @@ public class GDStudioRateLimitTests
         var albums = await ServiceFor(handler).GetArtistAlbumsAsync("gdstudio", Id("A"));
 
         Assert.Equal(99, Assert.Single(albums).SongCount);
+    }
+
+    // ---- a source that answers count > 50 with an empty list (apple) ----
+
+    private sealed class CountingHandler(int max) : HttpMessageHandler
+    {
+        public readonly List<int> Counts = [];
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var count = int.Parse(System.Web.HttpUtility.ParseQueryString(request.RequestUri!.Query)["count"]!);
+            lock (Counts) Counts.Add(count);
+            return Task.FromResult(Json(count > max ? "[]" : OneTrack));
+        }
+    }
+
+    [Fact]
+    public async Task EmptyAnswerToABigCount_IsAskedAgainWithFifty_AndThatSourceStaysCapped()
+    {
+        var handler = new CountingHandler(max: 50);
+        var service = ServiceFor(handler);
+
+        var first = await service.SearchSongsAsync("q", 99);
+        var second = await service.SearchSongsAsync("other", 99);
+
+        Assert.Single(first);
+        Assert.Single(second);
+        Assert.Equal([99, 50, 50], handler.Counts); // second query went straight to 50
+    }
+
+    [Fact]
+    public async Task GenuinelyEmptyResult_DoesNotCapTheSource()
+    {
+        var handler = new CountingHandler(max: 0); // always empty, whatever the count
+        var service = ServiceFor(handler);
+
+        Assert.Empty(await service.SearchSongsAsync("q", 99));
+        Assert.Empty(await service.SearchSongsAsync("other", 99));
+
+        Assert.Equal([99, 50, 99, 50], handler.Counts); // retried once each, never capped
     }
 }
