@@ -57,7 +57,15 @@ AppleMusic__AlacarteUrl=http://alacarte-host:7373
 AppleMusic__ApiToken=<token from alacarte's settings>
 ```
 
-With these set, Apple Music is offered next to your `Subsonic__MusicService` provider: search shows both, and each song, album and playlist downloads through its own provider. Set `Subsonic__MusicService=AppleMusic` to use Apple Music on its own. alacarte and octo-fiesta must mount the same music folder.
+Then add `AppleMusic` to `MUSIC_SERVICE` (`Subsonic__MusicService`), e.g. `MUSIC_SERVICE=Deezer,AppleMusic`: search shows both, and each song, album and playlist downloads through its own provider. Like every provider it is only used when listed; setting the two values alone logs a warning and is ignored. Set `MUSIC_SERVICE=AppleMusic` to use Apple Music on its own. alacarte and octo-fiesta must mount the same music folder.
+
+If alacarte's music folder isn't the same folder as your general `DOWNLOAD_PATH` (for example, alacarte already manages its own library layout, or the two containers only share a subfolder), point Apple Music at it directly instead of moving `DOWNLOAD_PATH`:
+
+```env
+AppleMusic__DownloadPath=/music
+```
+
+This — and the equivalent `<PROVIDER>__DownloadPath` for any other provider (`Deezer__DownloadPath`, `Qobuz__DownloadPath`, `Tidal__DownloadPath`, `Yandex__DownloadPath`, `SquidWTF__DownloadPath`) — overrides `Library__DownloadPath` for that provider only; every other provider keeps using the shared path. `AppleMusic__DownloadPath` must still resolve, inside the container, to the exact same folder alacarte itself writes into (i.e. both containers mount it the same way) — this setting only lets that folder differ from the one everything else downloads into, it doesn't remove the requirement that octo-fiesta and alacarte agree on it.
 
 ## Compatible Clients
 
@@ -98,6 +106,14 @@ See the [Installation](https://github.com/V1ck3s/octo-fiesta/wiki/Installation) 
 ## Configuration
 
 See the [Configuration](https://github.com/V1ck3s/octo-fiesta/wiki/Configuration) wiki page for all available settings.
+
+### Multiple providers
+
+`MUSIC_SERVICE` accepts several services separated by `,` (`|` and `;` also work), e.g. `MUSIC_SERVICE=Deezer,Qobuz`.
+
+- Searches go to every provider in parallel and the results are interleaved, so each provider is represented.
+- Songs, albums and artists keep the provider in their id, so streaming and downloads are routed back to the right one.
+- A provider without credentials (e.g. no `Deezer__Arl`) is skipped with a warning at startup, and a provider that fails during a search is skipped for that request. If only one service is listed it is always used; if none is usable the app refuses to start.
 
 ### Getting Credentials
 
