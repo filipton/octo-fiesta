@@ -93,12 +93,12 @@ public class GDStudioRateLimitTests
         }
     }
 
-    private static GDStudioMetadataService ServiceFor(HttpMessageHandler handler)
+    private static GDStudioMetadataService ServiceFor(HttpMessageHandler handler, string source = "netease")
     {
         var factory = new Mock<IHttpClientFactory>();
         factory.Setup(f => f.CreateClient(GDStudioHttpClientConfiguration.ClientName)).Returns(new HttpClient(handler));
         return new GDStudioMetadataService(factory.Object,
-            Options.Create(new GDStudioSettings { Source = "netease", TimeoutSeconds = 5 }),
+            Options.Create(new GDStudioSettings { Source = source, TimeoutSeconds = 5 }),
             NullLogger<GDStudioMetadataService>.Instance);
     }
 
@@ -175,5 +175,28 @@ public class GDStudioRateLimitTests
         Assert.Empty(await service.SearchSongsAsync("other", 99));
 
         Assert.Equal([99, 50, 99, 50], handler.Counts); // retried once each, never capped
+    }
+
+    [Fact]
+    public async Task KnownLimit_IsUsedFromTheFirstRequest_WithoutProbing()
+    {
+        var handler = new CountingHandler(max: 50);
+
+        var songs = await ServiceFor(handler, "apple").SearchSongsAsync("q", 99);
+
+        Assert.Single(songs);
+        Assert.Equal([50], handler.Counts); // apple is in the map: no failed 99 first, one request
+    }
+
+    [Fact]
+    public async Task UnknownSourceAtTheApiMax_KeepsAskingForTheApiMax()
+    {
+        var handler = new CountingHandler(max: 99);
+        var service = ServiceFor(handler, "netease");
+
+        await service.SearchSongsAsync("q", 99);
+        await service.SearchSongsAsync("other", 99);
+
+        Assert.Equal([99, 99], handler.Counts);
     }
 }

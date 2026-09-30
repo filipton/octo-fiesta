@@ -116,10 +116,17 @@ public class GDStudioMetadataService : IMusicMetadataService
         finally { _gate.Release(); }
     }
 
-    // Some sources (apple) answer count > 50 with an empty list instead of an error. When a big first-page request
-    // comes back empty it is asked again with 50; if that returns tracks, the source stays capped at 50.
+    // Largest count per API source (source + suffix, e.g. "apple" or "netease_album"); the API itself refuses
+    // more than MaxCount (422). Sources that accept less without an error (apple answers count > 50 with an
+    // empty list, HTTP 200) are listed here so they are never asked for too much, and every further request
+    // saves a call. Unlisted sources are checked once: when a big first page comes back empty it is asked
+    // again with SafeCount, and if that returns tracks the source is added to the map at SafeCount.
+    private static readonly IReadOnlyDictionary<string, int> KnownMaxCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["apple"] = 50,
+    };
     private const int SafeCount = 50;
-    private readonly ConcurrentDictionary<string, int> _countCap = new();
+    private readonly ConcurrentDictionary<string, int> _maxCount = new(KnownMaxCount, StringComparer.OrdinalIgnoreCase);
 
     // One page of one source (`suffix` selects e.g. "_album"). Failures and timeouts are logged, not thrown:
     // Ok is false and Tracks is empty, so the caller can keep what the other sources returned.
@@ -130,7 +137,7 @@ public class GDStudioMetadataService : IMusicMetadataService
         var seconds = _warmed.TryAdd(api, 0) ? _s.TimeoutSeconds * 3 : _s.TimeoutSeconds;
         var timeout = TimeSpan.FromSeconds(seconds);
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        var asked = _countCap.TryGetValue(api, out var cap) ? Math.Min(count, cap) : count;
+        var asked = _maxCount.TryGetValue(api, out var max) ? Math.Min(count, max) : count;
         try
         {
             var results = await Fetch(api, name, asked, page, timeout);
@@ -139,8 +146,8 @@ public class GDStudioMetadataService : IMusicMetadataService
                 var smaller = await Fetch(api, name, SafeCount, page, timeout);
                 if (smaller.Count > 0) // the big count was the problem, not an empty result: cap this source
                 {
-                    _logger.LogWarning("GDStudio {Source} returned nothing for count={Count} but {Results} for {Safe}, capping this source at {Safe}", api, asked, smaller.Count, SafeCount, SafeCount);
-                    _countCap[api] = asked = SafeCount;
+                    _logger.LogWarning("GDStudio {Source} returned nothing for count={Count} but {Results} for {Safe}, limiting this source to {Safe}", api, asked, smaller.Count, SafeCount, SafeCount);
+                    _maxCount[api] = asked = SafeCount;
                     results = smaller;
                 }
             }
