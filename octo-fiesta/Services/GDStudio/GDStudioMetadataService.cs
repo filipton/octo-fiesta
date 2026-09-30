@@ -129,7 +129,18 @@ public class GDStudioMetadataService : IMusicMetadataService
             _logger.LogInformation("GDStudio {Source} '{Query}' (count={Count}, page={Page}) -> {Results} results in {Ms} ms",
                 api, name, count, page, results.Count, watch.ElapsedMilliseconds);
             return (results.Where(t => !string.IsNullOrEmpty(t.Id))
-                .Select(t => t with { Id = _s.TrackId(source, t.Id) }).ToList(), true);
+                .Select(t =>
+                {
+                    var id = _s.TrackId(source, t.Id);
+                    var artists = t.Artist;
+                    if (source.Equals("apple", StringComparison.OrdinalIgnoreCase) &&
+                        !string.IsNullOrWhiteSpace(name) &&
+                        !artists.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        artists = [..artists, name];
+                    }
+                    return t with { Id = id, Artist = artists };
+                }).ToList(), true);
         }
         catch (OperationCanceledException)
         {
@@ -184,7 +195,17 @@ public class GDStudioMetadataService : IMusicMetadataService
             });
         }
         return lists.SelectMany(l => l.Select((t, i) => (t, i))).OrderBy(x => x.i).Select(x => x.t)
-            .Where(t => t.Artist.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase))).ToList();
+            .Where(t => t.Artist.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase)) ||
+                        t.Id.StartsWith("apple~", StringComparison.OrdinalIgnoreCase))
+            .Select(t =>
+            {
+                if (t.Id.StartsWith("apple~", StringComparison.OrdinalIgnoreCase) &&
+                    !t.Artist.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return t with { Artist = [..t.Artist, name] };
+                }
+                return t;
+            }).ToList();
     }
 
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)

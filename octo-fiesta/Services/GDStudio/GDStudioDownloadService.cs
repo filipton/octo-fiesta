@@ -64,14 +64,23 @@ public class GDStudioDownloadService : BaseDownloadService
                 cancellationToken);
             if (string.IsNullOrEmpty(info?.Url)) continue;
 
-            var response = await _http.GetAsync(info.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            var downloadUrl = info.Url;
+            if (!Uri.TryCreate(downloadUrl, UriKind.Absolute, out _))
+            {
+                var baseUri = new Uri(_settings.Api);
+                var siteHost = baseUri.Host.Replace("music-api.", "music.");
+                var origin = $"{baseUri.Scheme}://{siteHost}";
+                downloadUrl = $"{origin.TrimEnd('/')}/{downloadUrl.TrimStart('/')}";
+            }
+
+            var response = await _http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 response.Dispose();
                 continue;
             }
 
-            var ext = Path.GetExtension(new Uri(info.Url).AbsolutePath).ToLowerInvariant();
+            var ext = Path.GetExtension(new Uri(downloadUrl).AbsolutePath).ToLowerInvariant();
             if (ext is not (".flac" or ".mp3" or ".m4a" or ".aac" or ".ogg")) ext = info.Br >= 740 ? ".flac" : ".mp3";
             var quality = ext == ".flac" ? "FLAC" : info.Br >= 320 ? "MP3_320" : info.Br >= 192 ? "MP3_192" : "MP3_128";
 

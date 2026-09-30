@@ -17,17 +17,30 @@ using octo_fiesta.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// The flat names used in .env / docker-compose (GDSTUDIO_SOURCE, ...) also work as plain container
-// variables; the GDStudio__* form, when set, wins.
+// The flat names used in .env / docker-compose (GDSTUDIO_SOURCE, ...) and double-underscore
+// snake_case forms (GDSTUDIO__TIMEOUT_SECONDS, ...) also work as container variables.
 {
     var aliases = new Dictionary<string, string?>();
-    foreach (var (env, key) in new[] {
-        ("GDSTUDIO_SOURCE", "Source"), ("GDSTUDIO_TIMEOUT_SECONDS", "TimeoutSeconds"), ("GDSTUDIO_BR", "Br"),
-        ("GDSTUDIO_API", "Api"), ("GDSTUDIO_PROXY", "Proxy") })
+    var aliasDefs = new[] {
+        ("Source", new[] { "GDSTUDIO_SOURCE", "GDSTUDIO__SOURCE" }),
+        ("TimeoutSeconds", new[] { "GDSTUDIO_TIMEOUT_SECONDS", "GDSTUDIO__TIMEOUT_SECONDS", "GDSTUDIO__TIMEOUTSECONDS", "GDSTUDIO_TIMEOUTSECONDS" }),
+        ("Br", new[] { "GDSTUDIO_BR", "GDSTUDIO__BR" }),
+        ("Api", new[] { "GDSTUDIO_API", "GDSTUDIO__API" }),
+        ("Proxy", new[] { "GDSTUDIO_PROXY", "GDSTUDIO__PROXY" }),
+        ("Plugin", new[] { "GDSTUDIO_PLUGIN", "GDSTUDIO__PLUGIN" })
+    };
+    foreach (var (key, envVars) in aliasDefs)
     {
-        var value = Environment.GetEnvironmentVariable(env);
-        if (!string.IsNullOrWhiteSpace(value) && builder.Configuration[$"GDStudio:{key}"] is null)
-            aliases[$"GDStudio:{key}"] = value;
+        if (builder.Configuration[$"GDStudio:{key}"] is not null) continue;
+        foreach (var env in envVars)
+        {
+            var value = Environment.GetEnvironmentVariable(env);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                aliases[$"GDStudio:{key}"] = value;
+                break;
+            }
+        }
     }
     if (aliases.Count > 0) builder.Configuration.AddInMemoryCollection(aliases);
 }
