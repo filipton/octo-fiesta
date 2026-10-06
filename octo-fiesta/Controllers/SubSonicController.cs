@@ -186,11 +186,7 @@ public partial class SubsonicController : ControllerBase
         // Otherwise download from the provider and stream (quality upgrade logic applies)
         try
         {
-            var externalCoverArtService = GetExternalCoverArtService();
-            if (externalCoverArtService != null)
-            {
-                await externalCoverArtService.MarkAlbumDownloadStartedAsync(provider!, externalId!);
-            }
+            await MarkExternalAlbumDownloadStartedAsync(provider!, externalId!);
 
             // The download is deliberately not tied to RequestAborted. Nothing is sent to the
             // client until the file is complete, so a client that gives up waiting would kill
