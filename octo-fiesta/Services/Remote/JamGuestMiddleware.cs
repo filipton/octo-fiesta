@@ -5,9 +5,10 @@ namespace octo_fiesta.Services.Remote;
 
 /// <summary>
 /// Lets a jam guest without an account use the server with the jam host's rights, for what a guest
-/// does only: searching, reading albums, artists and covers, and the jam itself. A guest signs with
-/// <c>apiKey=nori-jam-&lt;key&gt;</c>; this swaps that for the host's credentials before the Subsonic
-/// authentication runs, and refuses anything else (streaming above all).
+/// does only: searching, reading albums, artists and covers, the jam itself, and, while the host lets its
+/// guests listen along, streaming the songs of its queue (<see cref="RemoteHub.MayStream"/>). A guest signs
+/// with <c>apiKey=nori-jam-&lt;key&gt;</c>; this swaps that for the host's credentials before the Subsonic
+/// authentication runs, and refuses anything else.
 /// </summary>
 public sealed class JamGuestMiddleware
 {
@@ -56,7 +57,8 @@ public sealed class JamGuestMiddleware
         }
         var allowed = f.Key.Member == null
             ? endpoint.Equals("noriRemote.join", StringComparison.OrdinalIgnoreCase)
-            : MemberEndpoints.Contains(endpoint);
+            : MemberEndpoints.Contains(endpoint)
+                || (endpoint.Equals("stream", StringComparison.OrdinalIgnoreCase) && _hub.MayStream(f.Key.Room, context.Request.Query["id"].ToString()));
         if (!allowed)
         {
             await Refuse(context, 403, 50, "Not for a jam guest");

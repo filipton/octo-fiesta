@@ -361,6 +361,46 @@ public sealed class RemoteHub
         }
     }
 
+    /// <summary>
+    /// Whether a member of jam <paramref name="roomId"/> may stream song <paramref name="id"/>: while the host lets
+    /// its guests listen along, and only a song of its queue from the one playing on (the ones it plays, and
+    /// requests once accepted; a provider song asked for and not accepted is not in it).
+    /// </summary>
+    public bool MayStream(string roomId, string id)
+    {
+        lock (_lock)
+        {
+            if (_rooms.GetValueOrDefault(roomId) is not { Jam: true } room
+                || room.Members.Find(m => m.Id == room.HostDevice)?.State is not { } state)
+            {
+                return false;
+            }
+            return Queued(state, id);
+        }
+    }
+
+    /// <summary>Song <paramref name="id"/> is in the queue a host's state lists, at or after the song playing, and the host lets guests listen along.</summary>
+    private static bool Queued(JsonElement state, string id)
+    {
+        if (state.ValueKind != JsonValueKind.Object
+            || !state.TryGetProperty("jam", out var jam) || jam.ValueKind != JsonValueKind.Object
+            || !jam.TryGetProperty("along", out var along) || along.ValueKind != JsonValueKind.Object
+            || !state.TryGetProperty("index", out var index) || index.ValueKind != JsonValueKind.Number
+            || !state.TryGetProperty("entries", out var entries) || entries.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+        var listed = entries.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object).ToList();
+        static long Number(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : -1;
+        var playing = listed.Find(e => Number(e, "index") == index.GetInt64());
+        if (playing.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+        var from = Number(playing, "turn");
+        return listed.Any(e => Number(e, "turn") >= from && e.TryGetProperty("id", out var i) && i.ValueKind == JsonValueKind.String && i.GetString() == id);
+    }
+
     /// <summary>What a jam key opens, with the host's credentials its requests are made with.</summary>
     public (RemoteKey Key, IReadOnlyList<KeyValuePair<string, string>> HostAuth)? FindKey(string key)
     {

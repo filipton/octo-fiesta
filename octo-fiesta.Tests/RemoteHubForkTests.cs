@@ -174,6 +174,36 @@ public class JamGuestMiddlewareForkTests
     }
 
     [Fact]
+    public async Task AGuestStreamsOnlyTheHostsQueueWhileItLetsThem()
+    {
+        var (room, invite) = _hub.Open("ann", "phone", "Ann", [new("u", "ann"), new("p", "pw")]);
+        var gus = _hub.Join(invite, "Gus")!.Value;
+        var ann = RemoteCaller.Account("ann");
+        void Host(string along) => _hub.Send(ann, "phone", "Ann", "phone", new RemoteOutgoing
+        {
+            Room = room,
+            State = JsonDocument.Parse(
+                "{\"index\":4,\"entries\":[{\"index\":2,\"turn\":0,\"id\":\"s0\"},{\"index\":4,\"turn\":1,\"id\":\"s1\"},{\"index\":0,\"turn\":2,\"id\":\"ext-deezer-song-7\"}],"
+                + "\"jam\":{\"pending\":[{\"song\":{\"id\":\"ext-deezer-song-9\"}}]" + along + "}}").RootElement.Clone(),
+        });
+        async Task<int> Stream(string id) => (await Run("/rest/stream", $"?apiKey=nori-jam-{gus.Key}&id={id}")).Context.Response.StatusCode;
+
+        Host("");
+        Assert.Equal(403, await Stream("s1"));
+        Host(",\"along\":{\"speed\":1,\"pitch\":1}");
+        var (context, passed) = await Run("/rest/stream.view", $"?apiKey=nori-jam-{gus.Key}&id=s1");
+        Assert.True(passed);
+        Assert.Equal("ann", context.Request.Query["u"].ToString());
+        Assert.True((await Run("/rest/stream", $"?apiKey=nori-jam-{gus.Key}&id=ext-deezer-song-7")).Passed, "an accepted provider song");
+        // Played already, asked for and not accepted, or not in the queue at all.
+        foreach (var id in new[] { "s0", "ext-deezer-song-9", "s9" })
+        {
+            Assert.Equal(403, await Stream(id));
+        }
+        Assert.False((await Run("/rest/stream", $"?apiKey=nori-jam-{invite}&id=s1")).Passed, "an invite only joins");
+    }
+
+    [Fact]
     public async Task AnInviteOnlyJoins()
     {
         var (_, invite) = _hub.Open("ann", "phone", "Ann", [new("u", "ann"), new("p", "pw")]);

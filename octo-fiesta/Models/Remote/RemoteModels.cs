@@ -11,7 +11,8 @@ public sealed record RemoteRoom(string Room, bool Jam, IReadOnlyList<RemoteMembe
 
 public sealed record RemoteEvent(long Seq, string Room, string From, JsonElement Body);
 
-public sealed record RemoteAnswer(long Seq, string You, IReadOnlyList<RemoteRoom> Rooms, IReadOnlyList<RemoteEvent> Events);
+/// <summary><paramref name="Along"/>: jam members may stream the songs of their host's queue (listening along).</summary>
+public sealed record RemoteAnswer(long Seq, string You, IReadOnlyList<RemoteRoom> Rooms, IReadOnlyList<RemoteEvent> Events, bool Along = true);
 
 /// <summary>What a device sends: its state, an event, or both. A null room is the account's.</summary>
 public sealed class RemoteOutgoing
