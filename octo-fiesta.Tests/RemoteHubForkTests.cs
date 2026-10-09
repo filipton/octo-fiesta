@@ -73,15 +73,36 @@ public class RemoteHubForkTests
     }
 
     [Fact]
-    public async Task QuietDevicesLeaveTheList()
+    public async Task AHeldPollIsNotEndedByItsOwnSends()
     {
+        var start = await Poll(Ann, "phone", serve: true);
+        var held = Poll(Ann, "phone", serve: true, since: start.Seq, hold: true);
+
+        Send(Ann, "phone", state: """{"playing":true}""");
+        Send(Ann, "phone", to: "desk", body: """{"t":"ack","id":1}""");
+        await Task.Delay(200);
+        Assert.False(held.IsCompleted);
+
+        Send(Ann, "desk", state: """{"playing":false}""");
+        var answer = await held.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Contains(answer.Rooms.Single().Members, m => m.Id == "desk");
+    }
+
+    [Fact]
+    public async Task DevicesLeaveTheListSoonAfterTheirLastPoll()
+    {
+        // The phone stopped polling; the tablet holds a poll all the while.
         await Poll(Ann, "phone", serve: true);
-        _now += TimeSpan.FromSeconds(100);
-        await Poll(Ann, "tablet", serve: true);
+        var tablet = await Poll(Ann, "tablet", serve: true);
+        var held = Poll(Ann, "tablet", serve: true, since: tablet.Seq, hold: true);
         _now += TimeSpan.FromSeconds(30);
 
         var answer = await Poll(Ann, "desk");
         Assert.Equal(["tablet"], answer.Rooms.Single().Members.Select(m => m.Id));
+        // The phone leaving answers the tablet's poll; it polls no more.
+        await held.WaitAsync(TimeSpan.FromSeconds(5));
+        _now += TimeSpan.FromSeconds(30);
+        Assert.Empty((await Poll(Ann, "desk")).Rooms.Single().Members);
     }
 
     [Fact]

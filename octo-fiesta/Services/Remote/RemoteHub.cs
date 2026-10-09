@@ -15,13 +15,18 @@ public sealed class RemoteHub
     /// <summary>Under the 60 s read timeout of common reverse proxies.</summary>
     public static readonly TimeSpan Hold = TimeSpan.FromSeconds(50);
 
-    /// <summary>An account device not heard from for this long is no longer listed.</summary>
-    private static readonly TimeSpan Presence = TimeSpan.FromSeconds(120);
+    /// <summary>
+    /// An account device with no poll held, not heard from for this long, is no longer listed. A device
+    /// that serves polls again as soon as an answer comes, so this is how long it can be between polls.
+    /// </summary>
+    private static readonly TimeSpan Presence = TimeSpan.FromSeconds(20);
 
     /// <summary>A jam whose host is not heard from for this long ends.</summary>
     private static readonly TimeSpan JamIdle = TimeSpan.FromMinutes(30);
 
     private const int KeptEvents = 256;
+    /// <summary>Changes kept per room, by whom: enough for a poll to tell its own sends from others'.</summary>
+    private const int KeptChanges = 64;
     private const int MaxJamMembers = 32;
 
     private sealed class Member
@@ -31,6 +36,8 @@ public sealed class RemoteHub
         public required string Kind { get; init; }
         public JsonElement? State { get; set; }
         public DateTime Seen { get; set; }
+        /// <summary>Its polls waiting for news now: it is there, however long they wait.</summary>
+        public int Holding { get; set; }
     }
 
     private sealed class Room
@@ -43,7 +50,8 @@ public sealed class RemoteHub
         public IReadOnlyList<KeyValuePair<string, string>> HostAuth { get; init; } = [];
         public List<Member> Members { get; } = [];
         public LinkedList<(long Seq, string From, string? To, JsonElement Body)> Events { get; } = new();
-        public long Changed { get; set; }
+        /// <summary>Its last changes and the member that made each (null: the hub).</summary>
+        public LinkedList<(long Seq, string? By)> Changes { get; } = new();
     }
 
     private readonly object _lock = new();
@@ -63,10 +71,14 @@ public sealed class RemoteHub
 
     private static string AccountRoom(string user) => "u:" + user;
 
-    /// <summary>Marks <paramref name="room"/> changed and wakes held polls; the new sequence.</summary>
-    private long Touch(Room room)
+    /// <summary>Marks <paramref name="room"/> changed by member <paramref name="by"/> (null: the hub) and wakes held polls; the new sequence.</summary>
+    private long Touch(Room room, string? by = null)
     {
-        room.Changed = ++_seq;
+        room.Changes.AddLast((++_seq, by));
+        while (room.Changes.Count > KeptChanges)
+        {
+            room.Changes.RemoveFirst();
+        }
         var waiting = _changed;
         _changed = NewSignal();
         waiting.TrySetResult();
@@ -108,7 +120,7 @@ public sealed class RemoteHub
                     Forget(room);
                 }
             }
-            else if (room.Members.RemoveAll(m => now - m.Seen > Presence) > 0)
+            else if (room.Members.RemoveAll(m => m.Holding == 0 && now - m.Seen > Presence) > 0)
             {
                 Touch(room);
             }
@@ -116,6 +128,24 @@ public sealed class RemoteHub
     }
 
     private static RemoteMember View(Member m) => new(m.Id, m.Name, m.Kind, m.State);
+
+    /// <summary>
+    /// Whether <paramref name="room"/> changed after <paramref name="since"/> other than by <paramref name="me"/>:
+    /// a device's own sends do not end its held poll.
+    /// </summary>
+    private static bool NewsFor(Room room, long since, string me)
+    {
+        // Changes after `since` were dropped from what is kept: they may be anyone's.
+        if (room.Changes.Count == KeptChanges && room.Changes.First!.Value.Seq > since + 1)
+        {
+            return true;
+        }
+        return room.Changes.Any(c => c.Seq > since && c.By != me);
+    }
+
+    /// <summary>The caller's members in <paramref name="rooms"/>.</summary>
+    private List<Member> MembersOf(string me, IEnumerable<string> rooms) =>
+        rooms.Select(_rooms.GetValueOrDefault).OfType<Room>().SelectMany(r => r.Members).Where(m => m.Id == me).ToList();
 
     private RemoteAnswer Answer(string me, IReadOnlyList<string> rooms, long? since)
     {
@@ -145,24 +175,40 @@ public sealed class RemoteHub
             (me, rooms) = Present(caller, dev, name, kind, serve);
         }
         var until = _now() + Hold;
-        while (true)
+        List<Member> holding = [];
+        try
         {
-            Task changed;
+            while (true)
+            {
+                Task changed;
+                lock (_lock)
+                {
+                    var news = since is not { } s || !hold || rooms.Any(r => !_rooms.TryGetValue(r, out var room) || NewsFor(room, s, me));
+                    var left = until - _now();
+                    if (news || left <= TimeSpan.Zero || ct.IsCancellationRequested)
+                    {
+                        Present(caller, dev, name, kind, serve);
+                        return Answer(me, rooms, since);
+                    }
+                    if (holding.Count == 0)
+                    {
+                        holding = MembersOf(me, rooms);
+                        holding.ForEach(m => m.Holding++);
+                    }
+                    changed = _changed.Task;
+                }
+                var left2 = until - _now();
+                if (left2 > TimeSpan.Zero)
+                {
+                    await Task.WhenAny(changed, Task.Delay(left2, ct)).ConfigureAwait(false);
+                }
+            }
+        }
+        finally
+        {
             lock (_lock)
             {
-                var news = since is not { } s || !hold || rooms.Any(r => !_rooms.TryGetValue(r, out var room) || room.Changed > s);
-                var left = until - _now();
-                if (news || left <= TimeSpan.Zero || ct.IsCancellationRequested)
-                {
-                    Present(caller, dev, name, kind, serve);
-                    return Answer(me, rooms, since);
-                }
-                changed = _changed.Task;
-            }
-            var left2 = until - _now();
-            if (left2 > TimeSpan.Zero)
-            {
-                await Task.WhenAny(changed, Task.Delay(left2, ct)).ConfigureAwait(false);
+                holding.ForEach(m => m.Holding--);
             }
         }
     }
@@ -259,7 +305,7 @@ public sealed class RemoteHub
             {
                 member.Seen = _now();
             }
-            var seq = Touch(room);
+            var seq = Touch(room, from);
             if (outgoing.Body is { } body)
             {
                 room.Events.AddLast((seq, from, outgoing.To, body.Clone()));
