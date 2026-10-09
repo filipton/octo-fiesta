@@ -161,16 +161,50 @@ public class JamGuestMiddlewareForkTests
     }
 
     [Theory]
-    [InlineData("/rest/stream", 403)]
-    [InlineData("/rest/star", 403)]
-    [InlineData("/rest/noriRemote.open", 403)]
-    public async Task AGuestCannotDoMore(string path, int status)
+    [InlineData("/rest/getAlbumList2.view")]
+    [InlineData("/rest/getArtists")]
+    [InlineData("/rest/getArtistInfo2")]
+    [InlineData("/rest/getTopSongs")]
+    [InlineData("/rest/getGenres")]
+    [InlineData("/rest/getSongsByGenre")]
+    [InlineData("/rest/getRandomSongs")]
+    [InlineData("/rest/getSimilarSongs2")]
+    [InlineData("/rest/getLyricsBySongId")]
+    public async Task AGuestBrowsesTheHostsLibrary(string path)
+    {
+        var (_, invite) = _hub.Open("ann", "phone", "Ann", [new("u", "ann"), new("p", "pw")]);
+        var gus = _hub.Join(invite, "Gus")!.Value;
+        var (context, passed) = await Run(path, $"?apiKey=nori-jam-{gus.Key}&id=ar-1");
+        Assert.True(passed);
+        Assert.Equal("ann", context.Request.Query["u"].ToString());
+    }
+
+    [Theory]
+    [InlineData("/rest/stream")]
+    [InlineData("/rest/download")]
+    [InlineData("/rest/star")]
+    [InlineData("/rest/unstar")]
+    [InlineData("/rest/setRating")]
+    [InlineData("/rest/scrobble")]
+    [InlineData("/rest/createPlaylist")]
+    [InlineData("/rest/updatePlaylist")]
+    [InlineData("/rest/deletePlaylist")]
+    [InlineData("/rest/getPlaylists")]
+    [InlineData("/rest/getPlaylist")]
+    [InlineData("/rest/getStarred2")]
+    [InlineData("/rest/savePlayQueue")]
+    [InlineData("/rest/getPlayQueue")]
+    [InlineData("/rest/createShare")]
+    [InlineData("/rest/createInternetRadioStation")]
+    [InlineData("/rest/startScan")]
+    [InlineData("/rest/noriRemote.open")]
+    public async Task AGuestCannotDoMore(string path)
     {
         var (_, invite) = _hub.Open("ann", "phone", "Ann", [new("u", "ann"), new("p", "pw")]);
         var gus = _hub.Join(invite, "Gus")!.Value;
         var (context, passed) = await Run(path, $"?apiKey=nori-jam-{gus.Key}&id=ext-deezer-song-1");
         Assert.False(passed);
-        Assert.Equal(status, context.Response.StatusCode);
+        Assert.Equal(403, context.Response.StatusCode);
     }
 
     [Fact]

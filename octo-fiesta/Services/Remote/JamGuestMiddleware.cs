@@ -5,10 +5,13 @@ namespace octo_fiesta.Services.Remote;
 
 /// <summary>
 /// Lets a jam guest without an account use the server with the jam host's rights, for what a guest
-/// does only: searching, reading albums, artists and covers, the jam itself, and, while the host lets its
-/// guests listen along, streaming the songs of its queue (<see cref="RemoteHub.MayStream"/>). A guest signs
-/// with <c>apiKey=nori-jam-&lt;key&gt;</c>; this swaps that for the host's credentials before the Subsonic
-/// authentication runs, and refuses anything else.
+/// does only: browsing the host's library read only (as nori's Home, Library, Search and its album and
+/// artist pages read it), the jam itself, and, while the host lets its guests listen along, streaming the
+/// songs of its queue (<see cref="RemoteHub.MayStream"/>). Nothing that writes to the host's account
+/// (stars, ratings, scrobbles, playlists, the saved queue) and no playlists at all: the hub cannot tell the
+/// host's private ones from its public ones. A guest signs with <c>apiKey=nori-jam-&lt;key&gt;</c>; this
+/// swaps that for the host's credentials before the Subsonic authentication runs, and refuses anything
+/// else.
 /// </summary>
 public sealed class JamGuestMiddleware
 {
@@ -20,9 +23,16 @@ public sealed class JamGuestMiddleware
     /// <summary>The jam key itself, for joining with an invite.</summary>
     public const string KeyItem = "noriRemoteKey";
 
+    /// <summary>
+    /// What a member may ask: the reads nori's pages make of the library (Home's album shelves and the
+    /// albums list, the artists, genres and their songs, an artist's info and top songs, similar and random
+    /// songs, lyrics, covers, search), and the jam.
+    /// </summary>
     private static readonly HashSet<string> MemberEndpoints = new(StringComparer.OrdinalIgnoreCase)
     {
         "ping", "search3", "getCoverArt", "getSong", "getAlbum", "getArtist",
+        "getAlbumList2", "getArtists", "getArtistInfo2", "getTopSongs", "getGenres", "getSongsByGenre",
+        "getRandomSongs", "getSimilarSongs2", "getLyricsBySongId",
         "noriRemote.poll", "noriRemote.send", "noriRemote.leave",
     };
 
