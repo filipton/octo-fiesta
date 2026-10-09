@@ -14,7 +14,7 @@ public sealed class JamInvitePageController : ControllerBase
     [HttpGet, Route("nori/jam")]
     public ContentResult Get()
     {
-        Response.Headers.CacheControl = "public, max-age=3600";
+        Response.Headers.CacheControl = "no-cache";
         Response.Headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'";
         Response.Headers["Referrer-Policy"] = "no-referrer";
         Response.Headers["X-Content-Type-Options"] = "nosniff";
@@ -71,11 +71,12 @@ public sealed class JamInvitePageController : ControllerBase
           function show(id) { document.getElementById(id).hidden = false; }
           if (!server || !key) { show("broken"); return; }
           if (/Android/i.test(navigator.userAgent)) {
-            var app = "intent://jam?s=" + encodeURIComponent(server) + "&k=" + encodeURIComponent(key) +
-              "#Intent;scheme=nori;package=dev.nori.music;S.browser_fallback_url=" + encodeURIComponent(releases) + ";end";
-            document.getElementById("open").href = app;
+            var app = "intent://jam?s=" + encodeURIComponent(server) + "&k=" + encodeURIComponent(key) + "#Intent;scheme=nori;";
+            document.getElementById("open").href = app + "package=dev.nori.music;S.browser_fallback_url=" + encodeURIComponent(releases) + ";end";
             show("android");
-            location.href = app;
+            // Without a tap Chrome may refuse to open an app and would then follow a fallback; this one has none,
+            // so the page stays and the button (with the releases page as fallback) is there.
+            location.href = app + "end";
             return;
           }
           var here = location.href;
